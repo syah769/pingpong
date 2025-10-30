@@ -22,6 +22,13 @@ export default function KRKLTournamentSystem() {
   const [matches, setMatches] = useState([]);
   const [liveResults, setLiveResults] = useState([]);
 
+  // Team table assignments state
+  const [teamTableAssignments, setTeamTableAssignments] = useState([]);
+  const [availableTables, setAvailableTables] = useState([]);
+  const [showTableAssignmentModal, setShowTableAssignmentModal] = useState(false);
+  const [selectedTeamForAssignment, setSelectedTeamForAssignment] = useState(null);
+  const [selectedCategoryForAssignment, setSelectedCategoryForAssignment] = useState('');
+
   // API endpoint (use local dev domain)
   const API_URL = 'http://pingpong.test/krkl-tournament/api.php';
 
@@ -33,6 +40,8 @@ export default function KRKLTournamentSystem() {
     fetchRumahSukan();
     fetchTeams();
     fetchMatches();
+    fetchTables();
+    fetchTeamTableAssignments();
   }, []);
 
   const fetchTeams = async () => {
@@ -115,6 +124,28 @@ export default function KRKLTournamentSystem() {
     } catch (error) {
       console.error('Error fetching matches:', error);
       setMatches([]);
+    }
+  };
+
+  const fetchTables = async () => {
+    try {
+      const response = await fetch(`${API_URL}?resource=tables`);
+      const data = await response.json();
+      setAvailableTables(data);
+    } catch (error) {
+      console.error('Error fetching tables:', error);
+      setAvailableTables([]);
+    }
+  };
+
+  const fetchTeamTableAssignments = async () => {
+    try {
+      const response = await fetch(`${API_URL}?resource=team_table_assignments`);
+      const data = await response.json();
+      setTeamTableAssignments(data);
+    } catch (error) {
+      console.error('Error fetching team table assignments:', error);
+      setTeamTableAssignments([]);
     }
   };
 
@@ -296,6 +327,83 @@ export default function KRKLTournamentSystem() {
     } catch (error) {
       console.error('Error deleting team:', error);
       alert('Error deleting team. Please try again.');
+    }
+  };
+
+  // Team Table Assignment Functions
+  const openTableAssignmentModal = (team, category) => {
+    setSelectedTeamForAssignment(team);
+    setSelectedCategoryForAssignment(category);
+    setShowTableAssignmentModal(true);
+  };
+
+  const closeTableAssignmentModal = () => {
+    setShowTableAssignmentModal(false);
+    setSelectedTeamForAssignment(null);
+    setSelectedCategoryForAssignment('');
+  };
+
+  const saveTeamTableAssignment = async (tableId, tableNotes) => {
+    if (!selectedTeamForAssignment || !selectedCategoryForAssignment) return;
+
+    try {
+      const response = await fetch(`${API_URL}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'save_team_table_assignment',
+          teamId: selectedTeamForAssignment.id,
+          category: selectedCategoryForAssignment,
+          preferredTableId: tableId || null,
+          tableNotes: tableNotes || ''
+        })
+      });
+
+      const result = await response.json();
+      if (result && result.success) {
+        alert('Team table assignment saved successfully');
+        await fetchTeams();
+        await fetchTeamTableAssignments();
+        closeTableAssignmentModal();
+      } else {
+        const message = result && result.message ? result.message : 'Failed to save team table assignment';
+        alert(message);
+      }
+    } catch (error) {
+      console.error('Error saving team table assignment:', error);
+      alert('Error saving team table assignment. Please try again.');
+    }
+  };
+
+  const deleteTeamTableAssignment = async (assignmentId, teamId, category) => {
+    try {
+      const response = await fetch(`${API_URL}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'delete_team_table_assignment',
+          assignmentId: assignmentId || 0,
+          teamId: teamId || 0,
+          category: category || ''
+        })
+      });
+
+      const result = await response.json();
+      if (result && result.success) {
+        alert('Team table assignment deleted successfully');
+        await fetchTeams();
+        await fetchTeamTableAssignments();
+      } else {
+        const message = result && result.message ? result.message : 'Failed to delete team table assignment';
+        alert(message);
+      }
+    } catch (error) {
+      console.error('Error deleting team table assignment:', error);
+      alert('Error deleting team table assignment. Please try again.');
     }
   };
 
@@ -1400,6 +1508,64 @@ export default function KRKLTournamentSystem() {
                               </p>
                             </div>
                           </div>
+
+                          {/* Table Assignment Section */}
+                          <div className="mt-4 p-3 bg-gray-100 rounded-lg">
+                            <p className="text-xs font-medium text-gray-600 mb-2">Table Assignment:</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="flex items-center justify-between p-2 bg-purple-50 rounded">
+                                <span className="text-xs text-purple-700">Mixed:</span>
+                                {team.tableAssignments?.mixedDoubles?.tableName ? (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-xs font-medium text-purple-800">
+                                      {team.tableAssignments.mixedDoubles.tableName}
+                                    </span>
+                                    <button
+                                      onClick={() => openTableAssignmentModal(team, 'Mixed Doubles')}
+                                      className="p-1 text-purple-600 hover:bg-purple-100 rounded"
+                                      title="Change table"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => openTableAssignmentModal(team, 'Mixed Doubles')}
+                                    className="p-1 text-purple-600 hover:bg-purple-100 rounded"
+                                    title="Assign table"
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="flex items-center justify-between p-2 bg-blue-50 rounded">
+                                <span className="text-xs text-blue-700">Men's:</span>
+                                {team.tableAssignments?.mensDoubles?.tableName ? (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-xs font-medium text-blue-800">
+                                      {team.tableAssignments.mensDoubles.tableName}
+                                    </span>
+                                    <button
+                                      onClick={() => openTableAssignmentModal(team, 'Men\'s Doubles')}
+                                      className="p-1 text-blue-600 hover:bg-blue-100 rounded"
+                                      title="Change table"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => openTableAssignmentModal(team, 'Men\'s Doubles')}
+                                    className="p-1 text-blue-600 hover:bg-blue-100 rounded"
+                                    title="Assign table"
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
                         </div>
                         <div className="flex gap-2">
                           <button
@@ -1907,6 +2073,70 @@ export default function KRKLTournamentSystem() {
           <p className="text-gray-400 text-sm mt-2">In accordance with the Laws of Table Tennis (ITTF)</p>
         </div>
       </div>
+
+      {/* Table Assignment Modal */}
+      {showTableAssignmentModal && selectedTeamForAssignment && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold mb-4">
+              Assign Table - {selectedTeamForAssignment.rumahName} ({selectedCategoryForAssignment})
+            </h3>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Table:
+                </label>
+                <select
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  defaultValue=""
+                  id="tableSelect"
+                >
+                  <option value="">No table assigned</option>
+                  {availableTables.map(table => (
+                    <option key={table.id} value={table.id}>
+                      {table.name} ({table.currentAssignment})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Notes (optional):
+                </label>
+                <textarea
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  rows="3"
+                  placeholder="Add any notes about this table assignment..."
+                  id="tableNotes"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={closeTableAssignmentModal}
+                className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const tableSelect = document.getElementById('tableSelect');
+                  const tableNotes = document.getElementById('tableNotes');
+                  const tableId = tableSelect.value ? parseInt(tableSelect.value) : null;
+                  const notes = tableNotes.value;
+                  saveTeamTableAssignment(tableId, notes);
+                }}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                Save Assignment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

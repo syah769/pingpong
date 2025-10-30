@@ -56,8 +56,8 @@ switch ($method) {
 $conn->close();
 
 function handleGet($conn) {
-    $action = $_GET['action'] ?? '';
-    
+    $action = $_GET['action'] ?? $_GET['resource'] ?? '';
+
     switch ($action) {
         case 'rumah_sukan':
             $result = $conn->query("SELECT * FROM rumah_sukan ORDER BY id");
@@ -77,9 +77,9 @@ function handleGet($conn) {
             
         case 'teams':
             $result = $conn->query("
-                SELECT t.*, r.name as rumah_name, r.color, r.color_hex 
-                FROM teams t 
-                LEFT JOIN rumah_sukan r ON t.rumah_sukan_id = r.id 
+                SELECT t.*, r.name as rumah_name, r.color, r.color_hex
+                FROM teams t
+                LEFT JOIN rumah_sukan r ON t.rumah_sukan_id = r.id
                 ORDER BY t.created_at DESC
             ");
             $teams = [];
@@ -119,8 +119,45 @@ function handleGet($conn) {
                     }, $players),
                     'createdAt' => $row['created_at'] ?? null,
                     'updatedAt' => $row['updated_at'] ?? null,
+                                    ];
+            }
+
+            // Enhance teams with table assignments
+            foreach ($teams as &$team) {
+                // Get mixed doubles table assignment
+                $mixedResult = $conn->prepare("
+                    SELECT tta.preferred_table_id, pt.name as table_name
+                    FROM team_table_assignments tta
+                    LEFT JOIN play_tables pt ON tta.preferred_table_id = pt.id
+                    WHERE tta.team_id = ? AND tta.category = 'Mixed Doubles'
+                ");
+                $mixedResult->bind_param("i", $team['id']);
+                $mixedResult->execute();
+                $mixedRow = $mixedResult->get_result()->fetch_assoc();
+
+                // Get men's doubles table assignment
+                $mensResult = $conn->prepare("
+                    SELECT tta.preferred_table_id, pt.name as table_name
+                    FROM team_table_assignments tta
+                    LEFT JOIN play_tables pt ON tta.preferred_table_id = pt.id
+                    WHERE tta.team_id = ? AND tta.category = 'Men\'s Doubles'
+                ");
+                $mensResult->bind_param("i", $team['id']);
+                $mensResult->execute();
+                $mensRow = $mensResult->get_result()->fetch_assoc();
+
+                $team['tableAssignments'] = [
+                    'mixedDoubles' => [
+                        'tableId' => ($mixedRow && $mixedRow['preferred_table_id']) ? (int)$mixedRow['preferred_table_id'] : null,
+                        'tableName' => $mixedRow['table_name'] ?? null
+                    ],
+                    'mensDoubles' => [
+                        'tableId' => ($mensRow && $mensRow['preferred_table_id']) ? (int)$mensRow['preferred_table_id'] : null,
+                        'tableName' => $mensRow['table_name'] ?? null
+                    ]
                 ];
             }
+
             echo json_encode($teams);
             break;
             
@@ -149,12 +186,64 @@ function handleGet($conn) {
             break;
         
         case 'tables':
-            $result = $conn->query("SELECT id, name, assigned_category FROM play_tables ORDER BY sort_order, id");
+            $result = $conn->query("SELECT id, name, assigned_category, current_assignment, priority_assignment, notes, sort_order FROM play_tables ORDER BY sort_order, id");
             $tables = [];
             while ($row = $result->fetch_assoc()) {
-                $tables[] = $row;
+                $tables[] = [
+                    'id' => (int)$row['id'],
+                    'name' => $row['name'],
+                    'assignedCategory' => $row['assigned_category'],
+                    'currentAssignment' => $row['current_assignment'],
+                    'priorityAssignment' => $row['priority_assignment'],
+                    'notes' => $row['notes'],
+                    'sortOrder' => (int)$row['sort_order']
+                ];
             }
             echo json_encode($tables);
+            break;
+
+        case 'team_table_assignments':
+            $result = $conn->query("
+                SELECT tta.*,
+                       t.id as team_id,
+                       t.rumah_sukan_id,
+                       rs.name as rumah_sukan_name,
+                       rs.color as rumah_sukan_color,
+                       pt.name as table_name,
+                       t.mixed_pair_player1,
+                       t.mixed_pair_player2,
+                       t.mens_pair_player1,
+                       t.mens_pair_player2
+                FROM team_table_assignments tta
+                LEFT JOIN teams t ON tta.team_id = t.id
+                LEFT JOIN rumah_sukan rs ON t.rumah_sukan_id = rs.id
+                LEFT JOIN play_tables pt ON tta.preferred_table_id = pt.id
+                ORDER BY tta.category, rs.name, t.id
+            ");
+            $assignments = [];
+            while ($row = $result->fetch_assoc()) {
+                $assignments[] = [
+                    'id' => (int)$row['id'],
+                    'teamId' => (int)$row['team_id'],
+                    'category' => $row['category'],
+                    'preferredTableId' => $row['preferred_table_id'] ? (int)$row['preferred_table_id'] : null,
+                    'tableName' => $row['table_name'],
+                    'tableNotes' => $row['table_notes'],
+                    'rumahSukanName' => $row['rumah_sukan_name'],
+                    'rumahSukanColor' => $row['rumah_sukan_color'],
+                    'mixedPair' => [
+                        'player1' => $row['mixed_pair_player1'] ?? '',
+                        'player2' => $row['mixed_pair_player2'] ?? ''
+                    ],
+                    'mensPair' => [
+                        'player1' => $row['mens_pair_player1'] ?? '',
+                        'player2' => $row['mens_pair_player2'] ?? ''
+                    ],
+                    'createdAt' => $row['created_at'],
+                    'updatedAt' => $row['updated_at']
+                ];
+            }
+            echo json_encode($assignments);
             break;
     }
 }
@@ -424,25 +513,294 @@ function handlePost($conn, $input) {
             
             echo json_encode(['success' => true, 'message' => 'Matches generated successfully']);
             break;
+
+        case 'assign_table':
+            $tableId = (int)($input['tableId'] ?? 0);
+            $category = $input['category'] ?? '';
+            $notes = $input['notes'] ?? '';
+
+            if (!in_array($category, ['Mixed Doubles', 'Men\'s Doubles', 'Both', 'Available'])) {
+                echo json_encode(['success' => false, 'message' => 'Invalid category']);
+                return;
+            }
+
+            $stmt = $conn->prepare("
+                UPDATE play_tables
+                SET current_assignment = ?, notes = ?
+                WHERE id = ?
+            ");
+            $stmt->bind_param("ssi", $category, $notes, $tableId);
+            $stmt->execute();
+
+            echo json_encode(['success' => true, 'message' => 'Table assigned successfully']);
+            break;
+
+        case 'set_table_priority':
+            $tableId = (int)($input['tableId'] ?? 0);
+            $priorityCategory = $input['priorityCategory'] ?? 'None';
+
+            if (!in_array($priorityCategory, ['Mixed Doubles', 'Men\'s Doubles', 'None'])) {
+                echo json_encode(['success' => false, 'message' => 'Invalid priority category']);
+                return;
+            }
+
+            $stmt = $conn->prepare("
+                UPDATE play_tables
+                SET priority_assignment = ?
+                WHERE id = ?
+            ");
+            $stmt->bind_param("si", $priorityCategory, $tableId);
+            $stmt->execute();
+
+            echo json_encode(['success' => true, 'message' => 'Table priority set successfully']);
+            break;
+
+        case 'auto_assign_tables':
+            $category = $input['category'] ?? '';
+
+            if (!in_array($category, ['Mixed Doubles', 'Men\'s Doubles'])) {
+                echo json_encode(['success' => false, 'message' => 'Invalid category']);
+                return;
+            }
+
+            // Clear current assignments for tables that can be assigned to this category
+            $stmt = $conn->prepare("
+                UPDATE play_tables
+                SET current_assignment = 'Available'
+                WHERE (assigned_category = ? OR assigned_category = 'Both')
+                AND current_assignment != ?
+            ");
+            $stmt->bind_param("ss", $category, $category);
+            $stmt->execute();
+
+            // Get tables that can be assigned to this category
+            $result = $conn->prepare("
+                SELECT id, name FROM play_tables
+                WHERE (assigned_category = ? OR assigned_category = 'Both')
+                AND current_assignment = 'Available'
+                ORDER BY
+                    CASE WHEN priority_assignment = ? THEN 1 ELSE 2 END,
+                    sort_order, id
+            ");
+            $result->bind_param("ss", $category, $category);
+            $result->execute();
+            $availableTables = $result->get_result();
+
+            // Assign available tables to the category
+            $updateStmt = $conn->prepare("UPDATE play_tables SET current_assignment = ? WHERE id = ?");
+            while ($table = $availableTables->fetch_assoc()) {
+                $updateStmt->bind_param("si", $category, $table['id']);
+                $updateStmt->execute();
+            }
+
+            echo json_encode(['success' => true, 'message' => 'Tables auto-assigned successfully']);
+            break;
+
+        case 'save_team_table_assignment':
+            $teamId = (int)($input['teamId'] ?? 0);
+            $category = $input['category'] ?? '';
+            $preferredTableId = $input['preferredTableId'] ?? null;
+            $tableNotes = $input['tableNotes'] ?? '';
+
+            if (!in_array($category, ['Mixed Doubles', 'Men\'s Doubles'])) {
+                echo json_encode(['success' => false, 'message' => 'Invalid category']);
+                return;
+            }
+
+            if ($teamId === 0) {
+                echo json_encode(['success' => false, 'message' => 'Invalid team ID']);
+                return;
+            }
+
+            $conn->begin_transaction();
+            try {
+                // Update team table assignment
+                $stmt = $conn->prepare("
+                    INSERT INTO team_table_assignments (team_id, category, preferred_table_id, table_notes)
+                    VALUES (?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                    preferred_table_id = VALUES(preferred_table_id),
+                    table_notes = VALUES(table_notes),
+                    updated_at = CURRENT_TIMESTAMP
+                ");
+                $stmt->bind_param("isis", $teamId, $category, $preferredTableId, $tableNotes);
+                $stmt->execute();
+
+                // Update teams table with direct reference for quick access
+                if ($category === 'Mixed Doubles') {
+                    $stmt = $conn->prepare("UPDATE teams SET mixed_doubles_table_id = ? WHERE id = ?");
+                    $stmt->bind_param("ii", $preferredTableId, $teamId);
+                    $stmt->execute();
+                } elseif ($category === 'Men\'s Doubles') {
+                    $stmt = $conn->prepare("UPDATE teams SET mens_doubles_table_id = ? WHERE id = ?");
+                    $stmt->bind_param("ii", $preferredTableId, $teamId);
+                    $stmt->execute();
+                }
+
+                $conn->commit();
+                echo json_encode(['success' => true, 'message' => 'Team table assignment saved successfully']);
+            } catch (Exception $e) {
+                $conn->rollback();
+                echo json_encode(['success' => false, 'message' => 'Error saving assignment: ' . $e->getMessage()]);
+            }
+            break;
+
+        case 'delete_team_table_assignment':
+            $assignmentId = (int)($input['assignmentId'] ?? 0);
+            $teamId = (int)($input['teamId'] ?? 0);
+            $category = $input['category'] ?? '';
+
+            if ($assignmentId === 0 && ($teamId === 0 || empty($category))) {
+                echo json_encode(['success' => false, 'message' => 'Invalid assignment details']);
+                return;
+            }
+
+            $conn->begin_transaction();
+            try {
+                if ($assignmentId > 0) {
+                    // Delete by assignment ID
+                    $stmt = $conn->prepare("DELETE FROM team_table_assignments WHERE id = ?");
+                    $stmt->bind_param("i", $assignmentId);
+                    $stmt->execute();
+                } else {
+                    // Delete by team and category
+                    $stmt = $conn->prepare("DELETE FROM team_table_assignments WHERE team_id = ? AND category = ?");
+                    $stmt->bind_param("is", $teamId, $category);
+                    $stmt->execute();
+                }
+
+                // Update teams table to remove direct reference
+                if ($category === 'Mixed Doubles') {
+                    $stmt = $conn->prepare("UPDATE teams SET mixed_doubles_table_id = NULL WHERE id = ?");
+                    $stmt->bind_param("i", $teamId);
+                    $stmt->execute();
+                } elseif ($category === 'Men\'s Doubles') {
+                    $stmt = $conn->prepare("UPDATE teams SET mens_doubles_table_id = NULL WHERE id = ?");
+                    $stmt->bind_param("i", $teamId);
+                    $stmt->execute();
+                }
+
+                $conn->commit();
+                echo json_encode(['success' => true, 'message' => 'Team table assignment deleted successfully']);
+            } catch (Exception $e) {
+                $conn->rollback();
+                echo json_encode(['success' => false, 'message' => 'Error deleting assignment: ' . $e->getMessage()]);
+            }
+            break;
     }
 }
 
 function handlePut($conn, $input) {
     $action = $input['action'] ?? '';
-    
+
     switch ($action) {
         case 'update_match_score':
             $score1 = (int)($input['score1'] ?? 0);
             $score2 = (int)($input['score2'] ?? 0);
             $matchId = (int)($input['matchId'] ?? 0);
             $stmt = $conn->prepare("
-                UPDATE matches 
-                SET score1 = ?, score2 = ?, status = 'completed', timestamp = NOW() 
+                UPDATE matches
+                SET score1 = ?, score2 = ?, status = 'completed', timestamp = NOW()
                 WHERE id = ?
             ");
             $stmt->bind_param("iii", $score1, $score2, $matchId);
             $stmt->execute();
             echo json_encode(['success' => true]);
+            break;
+
+        case 'assign_match_table':
+            $matchId = (int)($input['matchId'] ?? 0);
+            $tableId = (int)($input['tableId'] ?? 0);
+
+            // Check if the table is available for this match category
+            $result = $conn->prepare("
+                SELECT m.category, pt.current_assignment, pt.assigned_category
+                FROM matches m
+                LEFT JOIN play_tables pt ON pt.id = ?
+                WHERE m.id = ?
+            ");
+            $result->bind_param("ii", $tableId, $matchId);
+            $result->execute();
+            $data = $result->get_result()->fetch_assoc();
+
+            $matchCategory = $data['category'];
+            $currentAssignment = $data['current_assignment'];
+            $assignedCategory = $data['assigned_category'];
+
+            // Validate table assignment
+            $canAssign = false;
+            if ($currentAssignment === $matchCategory || $currentAssignment === 'Both') {
+                $canAssign = true;
+            } elseif ($currentAssignment === 'Available' && ($assignedCategory === $matchCategory || $assignedCategory === 'Both')) {
+                $canAssign = true;
+            }
+
+            if (!$canAssign) {
+                echo json_encode(['success' => false, 'message' => 'Table is not available for this match category']);
+                return;
+            }
+
+            // Assign the table
+            $stmt = $conn->prepare("UPDATE matches SET table_id = ? WHERE id = ?");
+            $stmt->bind_param("ii", $tableId, $matchId);
+            $stmt->execute();
+
+            echo json_encode(['success' => true, 'message' => 'Match assigned to table successfully']);
+            break;
+
+        case 'auto_assign_matches':
+            $category = $input['category'] ?? '';
+
+            if (!in_array($category, ['Mixed Doubles', 'Men\'s Doubles'])) {
+                echo json_encode(['success' => false, 'message' => 'Invalid category']);
+                return;
+            }
+
+            // Get all pending matches for the category
+            $matchesResult = $conn->prepare("
+                SELECT id FROM matches
+                WHERE category = ? AND status = 'pending' AND table_id IS NULL
+                ORDER BY match_number
+            ");
+            $matchesResult->bind_param("s", $category);
+            $matchesResult->execute();
+            $pendingMatches = $matchesResult->get_result();
+
+            // Get available tables for the category
+            $tablesResult = $conn->prepare("
+                SELECT id, name FROM play_tables
+                WHERE (current_assignment = ? OR current_assignment = 'Both' OR
+                      (current_assignment = 'Available' AND (assigned_category = ? OR assigned_category = 'Both')))
+                ORDER BY
+                    CASE WHEN priority_assignment = ? THEN 1 ELSE 2 END,
+                    sort_order, id
+            ");
+            $tablesResult->bind_param("sss", $category, $category, $category);
+            $tablesResult->execute();
+            $availableTables = $tablesResult->get_result();
+
+            // Simple round-robin assignment
+            $tables = [];
+            while ($table = $availableTables->fetch_assoc()) {
+                $tables[] = $table['id'];
+            }
+
+            if (empty($tables)) {
+                echo json_encode(['success' => false, 'message' => 'No tables available for this category']);
+                return;
+            }
+
+            $tableIndex = 0;
+            $updateStmt = $conn->prepare("UPDATE matches SET table_id = ? WHERE id = ?");
+
+            while ($match = $pendingMatches->fetch_assoc()) {
+                $tableId = $tables[$tableIndex % count($tables)];
+                $updateStmt->bind_param("ii", $tableId, $match['id']);
+                $updateStmt->execute();
+                $tableIndex++;
+            }
+
+            echo json_encode(['success' => true, 'message' => 'Matches auto-assigned to tables successfully']);
             break;
     }
 }
