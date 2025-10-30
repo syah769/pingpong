@@ -1,0 +1,9 @@
+{
+  "name": "krkl-tournament",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "php start.php",
+    "setup": "php start.php && echo 'Setup complete! Visit http://localhost:8000/krkl-tournament/public/'"
+  }
+}
