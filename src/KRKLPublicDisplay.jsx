@@ -107,7 +107,7 @@ const KRKLPublicDisplay = () => {
             score2: match.score2 ?? 0,
             points1: match.points1,
             points2: match.points2,
-            table: match.table ?? '',
+            table: match.table_name ?? match.table ?? (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : ''),
             match_time: match.match_time,
             timestamp: match.timestamp ?? match.created_at,
             completed_at: match.completed_at,
@@ -697,7 +697,10 @@ const KRKLPublicDisplay = () => {
                       <div key={match.id} className="bg-gradient-to-r from-green-50 to-emerald-50 p-6 rounded-lg border-2 border-green-200">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-semibold text-green-700">Match #{match.matchNumber} - {match.category}</span>
-                          <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">SELESAI</span>
+                          <div className="flex items-center gap-2">
+                            {match.table && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-medium">Meja {match.table}</span>}
+                            <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">SELESAI</span>
+                          </div>
                         </div>
                         <div className="grid md:grid-cols-3 gap-4 items-center">
                           <div className={`${winner?.id === rumah1?.id ? 'font-bold' : ''}`}>
@@ -763,7 +766,10 @@ const KRKLPublicDisplay = () => {
                       <div key={match.id} className="bg-gradient-to-r from-orange-50 to-amber-50 p-6 rounded-lg border-2 border-orange-200">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-semibold text-orange-700">Match #{match.matchNumber} - {match.category}</span>
-                          <span className="text-xs bg-orange-600 text-white px-2 py-1 rounded-full animate-pulse">SEDANG BERLANGSUNG</span>
+                          <div className="flex items-center gap-2">
+                            {match.table && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded font-medium">Meja {match.table}</span>}
+                            <span className="text-xs bg-orange-600 text-white px-2 py-1 rounded-full animate-pulse">SEDANG BERLANGSUNG</span>
+                          </div>
                         </div>
                         <div className="grid md:grid-cols-3 gap-4 items-center">
                           <div>
@@ -826,7 +832,10 @@ const KRKLPublicDisplay = () => {
                       <div key={match.id} className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-lg border-2 border-blue-200">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-semibold text-blue-700">Match #{match.matchNumber} - {match.category}</span>
-                          <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">AKAN DATANG</span>
+                          <div className="flex items-center gap-2">
+                            {match.table && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">Meja {match.table}</span>}
+                            <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">AKAN DATANG</span>
+                          </div>
                         </div>
                         <div className="grid md:grid-cols-3 gap-4 items-center">
                           <div>

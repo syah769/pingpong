@@ -1924,6 +1924,11 @@ export default function KRKLTournamentSystem() {
                             <div className="flex items-center justify-between mb-3">
                               <span className="text-sm font-semibold text-gray-600">Match #{match.matchNumber}</span>
                               <div className="flex items-center gap-2">
+                                {(match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')) && (
+                                  <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded font-medium">
+                                    Meja {match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')}
+                                  </span>
+                                )}
                                 {match.status === 'completed' && (
                                   <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">Selesai</span>
                                 )}
@@ -2012,6 +2017,11 @@ export default function KRKLTournamentSystem() {
                             <div className="flex items-center justify-between mb-3">
                               <span className="text-sm font-semibold text-gray-600">Match #{match.matchNumber}</span>
                               <div className="flex items-center gap-2">
+                                {(match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')) && (
+                                  <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded font-medium">
+                                    Meja {match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')}
+                                  </span>
+                                )}
                                 {match.status === 'completed' && (
                                   <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">Selesai</span>
                                 )}
@@ -2116,7 +2126,14 @@ export default function KRKLTournamentSystem() {
                         <div key={match.id} className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 rounded-lg border-2 border-green-200">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs font-semibold text-green-700">Match #{match.matchNumber} - {match.category}</span>
-                            <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">SELESAI</span>
+                            <div className="flex items-center gap-2">
+                              {(match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')) && (
+                                <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-medium">
+                                  Meja {match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')}
+                                </span>
+                              )}
+                              <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">SELESAI</span>
+                            </div>
                           </div>
                           <div className="grid md:grid-cols-3 gap-4 items-center">
                             <div className={`${winner?.id === rumah1?.id ? 'font-bold' : ''}`}>
