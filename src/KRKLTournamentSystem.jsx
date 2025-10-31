@@ -2834,9 +2834,8 @@ export default function KRKLTournamentSystem() {
       <div className="bg-gray-800 text-white py-6 mt-12">
         <div className="container mx-auto px-4 text-center">
           <p className="text-gray-300">
-            KRKL Ping Pong Tournament 2025 - Conducted in the spirit of fair play, discipline, and respect
+            KRKL LFSATHLON 2025 - Conducted in the spirit of fair play, discipline, and respect
           </p>
-          <p className="text-gray-400 text-sm mt-2">In accordance with the Laws of Table Tennis (ITTF)</p>
         </div>
       </div>
 
