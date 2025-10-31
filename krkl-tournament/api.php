@@ -245,6 +245,92 @@ function handleGet($conn) {
             }
             echo json_encode($assignments);
             break;
+
+        case 'spirit_marks':
+            $tournamentDate = $_GET['tournament_date'] ?? date('Y-m-d');
+            $safeTournamentDate = $conn->real_escape_string($tournamentDate);
+            $result = $conn->query("
+                SELECT sm.*, rs.name as rumah_name, rs.color as rumah_color
+                FROM spirit_marks sm
+                LEFT JOIN rumah_sukan rs ON sm.rumah_id = rs.id
+                WHERE sm.tournament_date = '$safeTournamentDate'
+                ORDER BY rs.name
+            ");
+            $spiritMarks = [];
+            while ($row = $result->fetch_assoc()) {
+                $spiritMarks[] = [
+                    'id' => (int)$row['id'],
+                    'rumahId' => (int)$row['rumah_id'],
+                    'rumahName' => $row['rumah_name'],
+                    'rumahColor' => $row['rumah_color'],
+                    'tournamentDate' => $row['tournament_date'],
+                    'assessorName' => $row['assessor_name'],
+                    'sportsmanshipScore' => (float)$row['sportsmanship_score'],
+                    'teamworkScore' => (float)$row['teamwork_score'],
+                    'seatArrangementScore' => (float)$row['seat_arrangement_score'],
+                    'totalScore' => (float)$row['total_score'],
+                    'sportsmanshipNotes' => $row['sportsmanship_notes'],
+                    'teamworkNotes' => $row['teamwork_notes'],
+                    'seatArrangementNotes' => $row['seat_arrangement_notes'],
+                    'overallNotes' => $row['overall_notes'],
+                    'createdAt' => $row['created_at'],
+                    'updatedAt' => $row['updated_at']
+                ];
+            }
+            echo json_encode($spiritMarks);
+            break;
+
+        case 'spirit_criteria':
+            $result = $conn->query("
+                SELECT * FROM spirit_criteria
+                WHERE is_active = TRUE
+                ORDER BY category, sort_order
+            ");
+            $criteria = [];
+            while ($row = $result->fetch_assoc()) {
+                $criteria[] = [
+                    'id' => (int)$row['id'],
+                    'category' => $row['category'],
+                    'criteriaDescription' => $row['criteria_description'],
+                    'maxScore' => (float)$row['max_score'],
+                    'weightPercentage' => (float)$row['weight_percentage'],
+                    'sortOrder' => (int)$row['sort_order']
+                ];
+            }
+            echo json_encode($criteria);
+            break;
+
+        case 'house_points':
+            $tournamentDate = $_GET['tournament_date'] ?? date('Y-m-d');
+            $safeTournamentDate = $conn->real_escape_string($tournamentDate);
+            $result = $conn->query("
+                SELECT hp.*, rs.name as rumah_name, rs.color as rumah_color
+                FROM house_points hp
+                LEFT JOIN rumah_sukan rs ON hp.rumah_id = rs.id
+                WHERE hp.tournament_date = '$safeTournamentDate'
+                ORDER BY hp.total_points DESC, hp.final_placement ASC
+            ");
+            $housePoints = [];
+            while ($row = $result->fetch_assoc()) {
+                $housePoints[] = [
+                    'id' => (int)$row['id'],
+                    'rumahId' => (int)$row['rumah_id'],
+                    'rumahName' => $row['rumah_name'],
+                    'rumahColor' => $row['rumah_color'],
+                    'tournamentDate' => $row['tournament_date'],
+                    'placementPoints' => (int)$row['placement_points'],
+                    'participationPoints' => (int)$row['participation_points'],
+                    'matchWinPoints' => (int)$row['match_win_points'],
+                    'spiritPoints' => (float)$row['spirit_points'],
+                    'totalPoints' => (float)$row['total_points'],
+                    'finalPlacement' => $row['final_placement'] ? (int)$row['final_placement'] : null,
+                    'tieBreakerNotes' => $row['tie_breaker_notes'],
+                    'createdAt' => $row['created_at'],
+                    'updatedAt' => $row['updated_at']
+                ];
+            }
+            echo json_encode($housePoints);
+            break;
     }
 }
 
@@ -687,6 +773,65 @@ function handlePost($conn, $input) {
                 echo json_encode(['success' => false, 'message' => 'Error deleting assignment: ' . $e->getMessage()]);
             }
             break;
+
+        case 'save_spirit_marks':
+            $rumahId = (int)($input['rumahId'] ?? 0);
+            $tournamentDate = $input['tournamentDate'] ?? date('Y-m-d');
+
+            // Validate date format
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $tournamentDate)) {
+                echo json_encode(['success' => false, 'message' => 'Invalid date format. Use YYYY-MM-DD']);
+                return;
+            }
+            $assessorName = $input['assessorName'] ?? '';
+            $sportsmanshipScore = (float)($input['sportsmanshipScore'] ?? 0.0);
+            $teamworkScore = (float)($input['teamworkScore'] ?? 0.0);
+            $seatArrangementScore = (float)($input['seatArrangementScore'] ?? 0.0);
+            $totalScore = $sportsmanshipScore + $teamworkScore + $seatArrangementScore;
+            $sportsmanshipNotes = $input['sportsmanshipNotes'] ?? '';
+            $teamworkNotes = $input['teamworkNotes'] ?? '';
+            $seatArrangementNotes = $input['seatArrangementNotes'] ?? '';
+            $overallNotes = $input['overallNotes'] ?? '';
+
+            if ($rumahId === 0 || empty($assessorName)) {
+                echo json_encode(['success' => false, 'message' => 'Invalid rumah ID or assessor name']);
+                return;
+            }
+
+            $stmt = $conn->prepare("
+                INSERT INTO spirit_marks
+                (rumah_id, tournament_date, assessor_name, sportsmanship_score, teamwork_score, seat_arrangement_score, total_score, sportsmanship_notes, teamwork_notes, seat_arrangement_notes, overall_notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                assessor_name = VALUES(assessor_name),
+                sportsmanship_score = VALUES(sportsmanship_score),
+                teamwork_score = VALUES(teamwork_score),
+                seat_arrangement_score = VALUES(seat_arrangement_score),
+                total_score = VALUES(total_score),
+                sportsmanship_notes = VALUES(sportsmanship_notes),
+                teamwork_notes = VALUES(teamwork_notes),
+                seat_arrangement_notes = VALUES(seat_arrangement_notes),
+                overall_notes = VALUES(overall_notes),
+                updated_at = CURRENT_TIMESTAMP
+            ");
+            $stmt->bind_param("isssdddssss",
+                $rumahId, $tournamentDate, $assessorName,
+                $sportsmanshipScore, $teamworkScore, $seatArrangementScore, $totalScore,
+                $sportsmanshipNotes, $teamworkNotes, $seatArrangementNotes, $overallNotes
+            );
+            $stmt->execute();
+
+            // Update house points with spirit marks
+            updateHousePoints($conn, $rumahId, $tournamentDate);
+
+            echo json_encode(['success' => true, 'message' => 'Spirit marks saved successfully']);
+            break;
+
+        case 'calculate_house_points':
+            $tournamentDate = $input['tournamentDate'] ?? date('Y-m-d');
+            calculateAllHousePoints($conn, $tournamentDate);
+            echo json_encode(['success' => true, 'message' => 'House points calculated successfully']);
+            break;
     }
 }
 
@@ -807,7 +952,7 @@ function handlePut($conn, $input) {
 
 function handleDelete($conn, $input) {
     $action = $input['action'] ?? '';
-    
+
     switch ($action) {
         case 'delete_team':
             $teamId = (int)($input['teamId'] ?? 0);
@@ -816,6 +961,104 @@ function handleDelete($conn, $input) {
             $stmt->execute();
             echo json_encode(['success' => true]);
             break;
+    }
+}
+
+function updateHousePoints($conn, $rumahId, $tournamentDate) {
+    // Validate date format
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $tournamentDate)) {
+        $tournamentDate = date('Y-m-d'); // Fallback to today
+    }
+
+    // Get spirit marks for this rumah
+    $safeTournamentDate = $conn->real_escape_string($tournamentDate);
+    $spiritResult = $conn->query("
+        SELECT total_score FROM spirit_marks
+        WHERE rumah_id = $rumahId AND tournament_date = '$safeTournamentDate'
+    ")->fetch_assoc();
+    $spiritPoints = $spiritResult['total_score'] ?? 0.0;
+
+    // Get match wins for this rumah - Fixed query to avoid duplicate counting
+    $matchResult = $conn->query("
+        SELECT COUNT(*) as wins FROM matches m
+        WHERE m.status = 'completed' AND (
+            (m.team1_id IN (SELECT id FROM teams WHERE rumah_sukan_id = $rumahId) AND m.score1 > m.score2) OR
+            (m.team2_id IN (SELECT id FROM teams WHERE rumah_sukan_id = $rumahId) AND m.score2 > m.score1)
+        )
+    ")->fetch_assoc();
+    $matchWins = $matchResult['wins'] ?? 0;
+
+    // Check participation (both categories fielded)
+    $participationResult = $conn->query("
+        SELECT COUNT(*) as teams_count FROM teams
+        WHERE rumah_sukan_id = $rumahId
+        AND (mixed_pair_player1 != '' AND mixed_pair_player2 != '' AND
+             mens_pair_player1 != '' AND mens_pair_player2 != '')
+    ")->fetch_assoc();
+    $hasBothCategories = ($participationResult['teams_count'] > 0) ? 1 : 0;
+
+    // Update or insert house points
+    $totalPoints = $matchWins + $hasBothCategories + $spiritPoints;
+
+    // Use direct query instead of prepared statement to debug date issue
+    $safeTournamentDate = $conn->real_escape_string($tournamentDate);
+    $sql = "
+        INSERT INTO house_points
+        (rumah_id, tournament_date, participation_points, match_win_points, spirit_points, total_points)
+        VALUES ($rumahId, '$safeTournamentDate', $hasBothCategories, $matchWins, $spiritPoints, $totalPoints)
+        ON DUPLICATE KEY UPDATE
+        participation_points = VALUES(participation_points),
+        match_win_points = VALUES(match_win_points),
+        spirit_points = VALUES(spirit_points),
+        total_points = VALUES(total_points),
+        updated_at = CURRENT_TIMESTAMP
+    ";
+
+    $conn->query($sql);
+}
+
+function calculateAllHousePoints($conn, $tournamentDate) {
+    // Validate date format
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $tournamentDate)) {
+        $tournamentDate = date('Y-m-d'); // Fallback to today
+    }
+
+    // Get all rumahs
+    $rumahs = $conn->query("SELECT id FROM rumah_sukan ORDER BY id");
+    while ($rumah = $rumahs->fetch_assoc()) {
+        updateHousePoints($conn, $rumah['id'], $tournamentDate);
+    }
+
+    // Calculate final placements based on total points
+    $safeTournamentDate = $conn->real_escape_string($tournamentDate);
+    $pointsResult = $conn->query("
+        SELECT rumah_id, total_points,
+               @row_num := @row_num + 1 AS placement
+        FROM house_points, (SELECT @row_num := 0) r
+        WHERE tournament_date = '$safeTournamentDate'
+        ORDER BY total_points DESC
+    ");
+
+    while ($row = $pointsResult->fetch_assoc()) {
+        $rumahId = $row['rumah_id'];
+        $placement = $row['placement'];
+        $placementPoints = match ($placement) {
+            1 => 3, // 1st place
+            2 => 2, // 2nd place
+            3 => 1, // 3rd place
+            default => 0
+        };
+
+        // Update with placement points
+        $totalWithPlacement = $row['total_points'] + $placementPoints;
+        $safeTournamentDate = $conn->real_escape_string($tournamentDate);
+        $sql = "
+            UPDATE house_points
+            SET placement_points = $placementPoints, final_placement = $placement,
+                total_points = participation_points + match_win_points + spirit_points + $placementPoints
+            WHERE rumah_id = $rumahId AND tournament_date = '$safeTournamentDate'
+        ";
+        $conn->query($sql);
     }
 }
 ?>

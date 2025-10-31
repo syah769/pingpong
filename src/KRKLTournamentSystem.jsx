@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Trophy, Users, Calendar, Clock, MapPin, Plus, Trash2, Edit2, Save, X, Download, BarChart3, TrendingUp, Eye, FileText, Network } from 'lucide-react';
+import { Trophy, Users, Calendar, Clock, MapPin, Plus, Trash2, Edit2, Save, X, Download, BarChart3, TrendingUp, Eye, FileText, Network, Star, Heart, Award } from 'lucide-react';
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import TournamentReport from './pdf/TournamentReport';
 
@@ -29,6 +29,24 @@ export default function KRKLTournamentSystem() {
   const [selectedTeamForAssignment, setSelectedTeamForAssignment] = useState(null);
   const [selectedCategoryForAssignment, setSelectedCategoryForAssignment] = useState('');
 
+  // Spirit marks assessment state
+  const [spiritMarks, setSpiritMarks] = useState([]);
+  const [spiritCriteria, setSpiritCriteria] = useState([]);
+  const [housePoints, setHousePoints] = useState([]);
+  const [showSpiritMarksModal, setShowSpiritMarksModal] = useState(false);
+  const [selectedRumahForSpirit, setSelectedRumahForSpirit] = useState(null);
+  const [spiritAssessment, setSpiritAssessment] = useState({
+    tournamentDate: new Date().toISOString().split('T')[0],
+    assessorName: '',
+    sportsmanshipScore: 0.0,
+    teamworkScore: 0.0,
+    seatArrangementScore: 0.0,
+    sportsmanshipNotes: '',
+    teamworkNotes: '',
+    seatArrangementNotes: '',
+    overallNotes: ''
+  });
+
   // API endpoint (use local dev domain)
   const API_URL = 'http://pingpong.test/krkl-tournament/api.php';
 
@@ -42,6 +60,9 @@ export default function KRKLTournamentSystem() {
     fetchMatches();
     fetchTables();
     fetchTeamTableAssignments();
+    fetchSpiritMarks();
+    fetchSpiritCriteria();
+    fetchHousePoints();
   }, []);
 
   const fetchTeams = async () => {
@@ -146,6 +167,39 @@ export default function KRKLTournamentSystem() {
     } catch (error) {
       console.error('Error fetching team table assignments:', error);
       setTeamTableAssignments([]);
+    }
+  };
+
+  const fetchSpiritMarks = async () => {
+    try {
+      const response = await fetch(`${API_URL}?resource=spirit_marks`);
+      const data = await response.json();
+      setSpiritMarks(data);
+    } catch (error) {
+      console.error('Error fetching spirit marks:', error);
+      setSpiritMarks([]);
+    }
+  };
+
+  const fetchSpiritCriteria = async () => {
+    try {
+      const response = await fetch(`${API_URL}?resource=spirit_criteria`);
+      const data = await response.json();
+      setSpiritCriteria(data);
+    } catch (error) {
+      console.error('Error fetching spirit criteria:', error);
+      setSpiritCriteria([]);
+    }
+  };
+
+  const fetchHousePoints = async () => {
+    try {
+      const response = await fetch(`${API_URL}?resource=house_points`);
+      const data = await response.json();
+      setHousePoints(data);
+    } catch (error) {
+      console.error('Error fetching house points:', error);
+      setHousePoints([]);
     }
   };
 
@@ -404,6 +458,106 @@ export default function KRKLTournamentSystem() {
     } catch (error) {
       console.error('Error deleting team table assignment:', error);
       alert('Error deleting team table assignment. Please try again.');
+    }
+  };
+
+  // Spirit Marks Management
+  const openSpiritMarksModal = (rumah) => {
+    setSelectedRumahForSpirit(rumah);
+
+    // Find existing spirit marks for this rumah
+    const existingMarks = spiritMarks.find(sm => sm.rumahId === rumah.id);
+
+    if (existingMarks) {
+      // Pre-fill form with existing data
+      setSpiritAssessment({
+        tournamentDate: existingMarks.tournamentDate,
+        assessorName: existingMarks.assessorName,
+        sportsmanshipScore: existingMarks.sportsmanshipScore,
+        teamworkScore: existingMarks.teamworkScore,
+        seatArrangementScore: existingMarks.seatArrangementScore,
+        sportsmanshipNotes: existingMarks.sportsmanshipNotes || '',
+        teamworkNotes: existingMarks.teamworkNotes || '',
+        seatArrangementNotes: existingMarks.seatArrangementNotes || '',
+        overallNotes: existingMarks.overallNotes || ''
+      });
+    } else {
+      // Create new empty form
+      setSpiritAssessment({
+        tournamentDate: new Date().toISOString().split('T')[0],
+        assessorName: '',
+        sportsmanshipScore: 0.0,
+        teamworkScore: 0.0,
+        seatArrangementScore: 0.0,
+        sportsmanshipNotes: '',
+        teamworkNotes: '',
+        seatArrangementNotes: '',
+        overallNotes: ''
+      });
+    }
+
+    setShowSpiritMarksModal(true);
+  };
+
+  const saveSpiritMarks = async () => {
+    if (!selectedRumahForSpirit || !spiritAssessment.assessorName.trim()) {
+      alert('Please enter assessor name');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'save_spirit_marks',
+          rumahId: selectedRumahForSpirit.id,
+          ...spiritAssessment
+        })
+      });
+
+      const result = await response.json();
+      if (result && result.success) {
+        alert('Spirit marks saved successfully');
+        setShowSpiritMarksModal(false);
+        await fetchSpiritMarks();
+        await fetchHousePoints();
+      } else {
+        const message = result && result.message ? result.message : 'Failed to save spirit marks';
+        alert(message);
+      }
+    } catch (error) {
+      console.error('Error saving spirit marks:', error);
+      alert('Error saving spirit marks. Please try again.');
+    }
+  };
+
+  const calculateHousePoints = async () => {
+    try {
+      const response = await fetch(`${API_URL}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'calculate_house_points',
+          tournamentDate: new Date().toISOString().split('T')[0]
+        })
+      });
+
+      const result = await response.json();
+      if (result && result.success) {
+        alert('House points calculated successfully');
+        await fetchHousePoints();
+      } else {
+        const message = result && result.message ? result.message : 'Failed to calculate house points';
+        alert(message);
+      }
+    } catch (error) {
+      console.error('Error calculating house points:', error);
+      alert('Error calculating house points. Please try again.');
     }
   };
 
@@ -776,7 +930,11 @@ export default function KRKLTournamentSystem() {
       const placement = placementPoints.get(houseId) ?? 0;
       const participation = participationPoints.get(houseId) ?? 0;
       const matchWins = stat.matchWinPoints ?? stat.wins ?? 0;
-      const sportsmanship = 0;
+
+      // Get spirit points from housePoints state
+      const spiritHouse = housePoints.find(hp => hp.rumahId === houseId);
+      const sportsmanship = spiritHouse ? spiritHouse.spiritPoints : 0;
+
       const categoryWins = categoryTitlesCount.get(houseId) ?? 0;
       const totalPoints = placement + participation + matchWins + sportsmanship;
 
@@ -788,7 +946,7 @@ export default function KRKLTournamentSystem() {
         placementPoints: placement,
         participationPoints: participation,
         matchWinPoints: matchWins,
-        sportsmanshipPoints: sportsmanship,
+        spiritPoints: sportsmanship,
         categoryWins,
         totalPoints,
         leaguePoints: stat.leaguePoints ?? 0,
@@ -823,7 +981,7 @@ export default function KRKLTournamentSystem() {
       rawHousePoints: housePointsBase,
       categoryTitlesCount,
     };
-  }, [matches, rumahSukan, teams]);
+  }, [matches, rumahSukan, teams, housePoints]); // Added housePoints to dependency array
 
   const standings = standingsSummary?.standings ?? [];
   const overallStatsMap = standingsSummary?.overallStatsMap ?? new Map();
@@ -840,7 +998,7 @@ export default function KRKLTournamentSystem() {
       housePoints={housePointsTable}
       categoryStandings={categoryStandings}
     />
-  ), [rumahSukan, teams, matches, standings, housePointsTable, categoryStandings]);
+  ), [rumahSukan, teams, matches, standings, housePoints, categoryStandings]);
 
   // Report Generation
   const generateReport = () => {
@@ -1113,7 +1271,7 @@ export default function KRKLTournamentSystem() {
       <div className="bg-white shadow-md">
         <div className="container mx-auto px-4">
           <div className="flex gap-1 overflow-x-auto">
-            {['home', 'rumah', 'register', 'brackets', 'live', 'standings', 'graph'].map(tab => (
+            {['home', 'rumah', 'register', 'brackets', 'live', 'standings', 'house-points', 'graph'].map(tab => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -1123,7 +1281,7 @@ export default function KRKLTournamentSystem() {
                     : 'text-gray-600 hover:bg-gray-100'
                 }`}
               >
-                {tab === 'rumah' ? 'Senarai Rumah' : tab === 'graph' ? 'Match Graph' : tab}
+                {tab === 'rumah' ? 'Senarai Rumah' : tab === 'house-points' ? 'House Points' : tab === 'graph' ? 'Match Graph' : tab}
               </button>
             ))}
           </div>
@@ -2009,7 +2167,7 @@ export default function KRKLTournamentSystem() {
                               <td className="p-2 text-center">{house.placementPoints}</td>
                               <td className="p-2 text-center">{house.participationPoints}</td>
                               <td className="p-2 text-center">{house.matchWinPoints}</td>
-                              <td className="p-2 text-center">{house.sportsmanshipPoints}</td>
+                              <td className="p-2 text-center">{house.spiritPoints.toFixed(2)}</td>
                               <td className="p-2 text-center">{house.categoryWins}</td>
                               <td className="p-2 text-center font-semibold text-indigo-600">{house.totalPoints}</td>
                             </tr>
@@ -2061,6 +2219,161 @@ export default function KRKLTournamentSystem() {
 
         {activeTab === 'graph' && (
           <MatchGraph />
+        )}
+
+        {activeTab === 'house-points' && (
+          <div className="space-y-6">
+            {/* Spirit Marks Assessment Section */}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                  <Star className="w-6 h-6 text-yellow-500" />
+                  Spirit Marks Assessment
+                </h2>
+              </div>
+
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {rumahSukan.map(rumah => {
+                  const existingMarks = spiritMarks.find(sm => sm.rumahId === rumah.id);
+                  return (
+                    <div key={rumah.id} className={`border rounded-lg p-4 ${rumah.color} bg-opacity-10`}>
+                      <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-semibold text-lg">{rumah.name}</h3>
+                        {existingMarks && (
+                          <div className="text-right">
+                            <div className="text-sm text-gray-600">Total Score</div>
+                            <div className="text-xl font-bold text-green-600">
+                              {existingMarks.totalScore.toFixed(2)} / 1.00
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-2 mb-4">
+                        {existingMarks && (
+                          <>
+                            <div className="flex justify-between text-sm">
+                              <span>Sportsmanship:</span>
+                              <span className="font-medium">{existingMarks.sportsmanshipScore.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span>Teamwork:</span>
+                              <span className="font-medium">{existingMarks.teamworkScore.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span>Seat Arrangement:</span>
+                              <span className="font-medium">{existingMarks.seatArrangementScore.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span>Assessor:</span>
+                              <span className="font-medium">{existingMarks.assessorName}</span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => openSpiritMarksModal(rumah)}
+                        className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center justify-center gap-2"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                        {existingMarks ? 'Edit Assessment' : 'Add Assessment'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* House Points Summary */}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                  <Trophy className="w-6 h-6 text-yellow-500" />
+                  House Points Summary
+                </h2>
+                <button
+                  onClick={calculateHousePoints}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-2"
+                >
+                  <BarChart3 className="w-4 h-4" />
+                  Calculate Points
+                </button>
+              </div>
+
+              {housePoints.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full table-auto">
+                    <thead className="bg-gray-100">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Rank</th>
+                        <th className="px-4 py-3 text-left">Rumah</th>
+                        <th className="px-4 py-3 text-center">Placement</th>
+                        <th className="px-4 py-3 text-center">Participation</th>
+                        <th className="px-4 py-3 text-center">Match Wins</th>
+                        <th className="px-4 py-3 text-center">Spirit Marks</th>
+                        <th className="px-4 py-3 text-center font-bold">Total Points</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {housePoints.map((house, index) => (
+                        <tr key={house.id} className="border-b hover:bg-gray-50">
+                          <td className="px-4 py-3">
+                            {house.finalPlacement && (
+                              <div className="flex items-center gap-2">
+                                {house.finalPlacement === 1 && <Trophy className="w-5 h-5 text-yellow-500" />}
+                                {house.finalPlacement === 2 && <Award className="w-5 h-5 text-gray-400" />}
+                                {house.finalPlacement === 3 && <Award className="w-5 h-5 text-amber-600" />}
+                                <span className="font-bold">#{house.finalPlacement}</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className={`px-3 py-1 rounded-full text-white text-sm font-medium ${house.rumahColor}`}>
+                              {house.rumahName}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-center font-medium">{house.placementPoints}</td>
+                          <td className="px-4 py-3 text-center">{house.participationPoints}</td>
+                          <td className="px-4 py-3 text-center">{house.matchWinPoints}</td>
+                          <td className="px-4 py-3 text-center text-green-600 font-medium">
+                            {house.spiritPoints.toFixed(2)}
+                          </td>
+                          <td className="px-4 py-3 text-center font-bold text-lg">
+                            {house.totalPoints.toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <Trophy className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                  <p>No house points calculated yet.</p>
+                  <p className="text-sm mt-2">Complete spirit marks assessments and calculate points to see standings.</p>
+                </div>
+              )}
+
+              {/* TNC System Information */}
+              <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+                <h4 className="font-semibold text-blue-800 mb-2 flex items-center gap-2">
+                  <FileText className="w-4 h-4" />
+                  TNC Scoring System
+                </h4>
+                <div className="grid md:grid-cols-2 gap-4 text-sm text-blue-700">
+                  <div>
+                    <p><strong>Placement Points:</strong> 1st=3, 2nd=2, 3rd=1 point</p>
+                    <p><strong>Participation:</strong> 1 point (both categories fielded)</p>
+                  </div>
+                  <div>
+                    <p><strong>Match Wins:</strong> 1 point per victory</p>
+                    <p><strong>Spirit Marks:</strong> Up to 1.00 point (assessed by committee)</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
 
@@ -2133,6 +2446,199 @@ export default function KRKLTournamentSystem() {
               >
                 Save Assignment
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Spirit Marks Assessment Modal */}
+      {showSpiritMarksModal && selectedRumahForSpirit && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold flex items-center gap-2">
+                <Star className="w-5 h-5 text-yellow-500" />
+                Spirit Marks Assessment - {selectedRumahForSpirit.name}
+              </h3>
+              <button
+                onClick={() => setShowSpiritMarksModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              {/* Assessor Information */}
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Tournament Date:
+                  </label>
+                  <input
+                    type="date"
+                    value={spiritAssessment.tournamentDate}
+                    onChange={(e) => setSpiritAssessment({...spiritAssessment, tournamentDate: e.target.value})}
+                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Assessor Name *:
+                  </label>
+                  <input
+                    type="text"
+                    value={spiritAssessment.assessorName}
+                    onChange={(e) => setSpiritAssessment({...spiritAssessment, assessorName: e.target.value})}
+                    placeholder="Enter assessor name"
+                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Assessment Scores */}
+              <div>
+                <h4 className="font-semibold text-gray-800 mb-4">Assessment Scores (Max 1.00 point total)</h4>
+                <div className="grid md:grid-cols-3 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Sportsmanship (0.40 pts):
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="0.40"
+                      step="0.01"
+                      value={spiritAssessment.sportsmanshipScore}
+                      onChange={(e) => setSpiritAssessment({...spiritAssessment, sportsmanshipScore: parseFloat(e.target.value) || 0})}
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <div className="text-xs text-gray-500 mt-1">
+                      Respect officials, fair play, discipline
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Teamwork (0.30 pts):
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="0.30"
+                      step="0.01"
+                      value={spiritAssessment.teamworkScore}
+                      onChange={(e) => setSpiritAssessment({...spiritAssessment, teamworkScore: parseFloat(e.target.value) || 0})}
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <div className="text-xs text-gray-500 mt-1">
+                      Team cooperation, unity, support
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Seat Arrangement (0.30 pts):
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="0.30"
+                      step="0.01"
+                      value={spiritAssessment.seatArrangementScore}
+                      onChange={(e) => setSpiritAssessment({...spiritAssessment, seatArrangementScore: parseFloat(e.target.value) || 0})}
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <div className="text-xs text-gray-500 mt-1">
+                      Organization, cleanliness, layout
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 p-3 bg-blue-50 rounded-md">
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium text-blue-800">Total Score:</span>
+                    <span className="text-lg font-bold text-blue-800">
+                      {(spiritAssessment.sportsmanshipScore + spiritAssessment.teamworkScore + spiritAssessment.seatArrangementScore).toFixed(2)} / 1.00
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Assessment Notes */}
+              <div>
+                <h4 className="font-semibold text-gray-800 mb-4">Assessment Notes</h4>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Sportsmanship Notes:
+                    </label>
+                    <textarea
+                      value={spiritAssessment.sportsmanshipNotes}
+                      onChange={(e) => setSpiritAssessment({...spiritAssessment, sportsmanshipNotes: e.target.value})}
+                      rows="2"
+                      placeholder="Comments on sportsmanship behavior, respect for officials, etc."
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Teamwork Notes:
+                    </label>
+                    <textarea
+                      value={spiritAssessment.teamworkNotes}
+                      onChange={(e) => setSpiritAssessment({...spiritAssessment, teamworkNotes: e.target.value})}
+                      rows="2"
+                      placeholder="Comments on team cooperation, unity, support for members"
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Seat Arrangement Notes:
+                    </label>
+                    <textarea
+                      value={spiritAssessment.seatArrangementNotes}
+                      onChange={(e) => setSpiritAssessment({...spiritAssessment, seatArrangementNotes: e.target.value})}
+                      rows="2"
+                      placeholder="Comments on seating organization, cleanliness, layout"
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Overall Assessment Notes:
+                    </label>
+                    <textarea
+                      value={spiritAssessment.overallNotes}
+                      onChange={(e) => setSpiritAssessment({...spiritAssessment, overallNotes: e.target.value})}
+                      rows="3"
+                      placeholder="Overall comments, observations, recommendations"
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-3 pt-4 border-t">
+                <button
+                  onClick={() => setShowSpiritMarksModal(false)}
+                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveSpiritMarks}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
+                >
+                  <Save className="w-4 h-4" />
+                  Save Assessment
+                </button>
+              </div>
             </div>
           </div>
         </div>
