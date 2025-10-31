@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Trophy, Users, Calendar, Clock, MapPin, Plus, Trash2, Edit2, Save, X, Download, BarChart3, TrendingUp, Eye, FileText, Network, Star, Heart, Award } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Trophy, Users, Calendar, Clock, MapPin, Plus, Trash2, Edit2, Save, X, Download, BarChart3, TrendingUp, Eye, FileText, Network, Star, Heart, Award, ExternalLink } from 'lucide-react';
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import TournamentReport from './pdf/TournamentReport';
 
@@ -1250,6 +1251,16 @@ export default function KRKLTournamentSystem() {
               <p className="text-blue-100 mt-1">Tournament Management System</p>
             </div>
             <div className="text-right">
+              {/* Public Display Link */}
+              <Link
+                to="/public"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors mb-3"
+              >
+                <Eye className="w-4 h-4" />
+                Public Display
+                <ExternalLink className="w-3 h-3" />
+              </Link>
+
               <div className="flex items-center gap-2 text-sm">
                 <Calendar className="w-4 h-4" />
                 <span>1 November 2025</span>
