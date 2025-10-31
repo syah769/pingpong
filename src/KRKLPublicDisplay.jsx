@@ -589,7 +589,7 @@ const KRKLPublicDisplay = () => {
       <div className="bg-white rounded-lg shadow-lg p-8">
         <h3 className="text-xl font-bold mb-6 text-gray-800 flex items-center gap-2">
           <Network className="w-6 h-6 text-blue-600" />
-          Graf Perlawanan (Match Connection Graph)
+          Match Connection Graph
         </h3>
 
         <div className="grid md:grid-cols-2 gap-6">
@@ -600,7 +600,7 @@ const KRKLPublicDisplay = () => {
                 <h4 className="font-bold text-lg">{rumah.name}</h4>
               </div>
               <div className="space-y-2">
-                <p className="text-sm font-medium text-gray-700">Bertemu dengan:</p>
+                <p className="text-sm font-medium text-gray-700">Opponents:</p>
                 {rumah.opponents.length > 0 ? (
                   <div className="flex flex-wrap gap-2">
                     {rumah.opponents.map((opp, idx) => {
@@ -617,7 +617,7 @@ const KRKLPublicDisplay = () => {
                     })}
                   </div>
                 ) : (
-                  <p className="text-sm text-gray-500">Tiada perlawanan lagi</p>
+                  <p className="text-sm text-gray-500">No matches yet</p>
                 )}
               </div>
               <div className="mt-4 pt-4 border-t">
@@ -628,7 +628,7 @@ const KRKLPublicDisplay = () => {
                   </div>
                   <div>
                     <p className="text-2xl font-bold text-green-600">{rumah.wins}</p>
-                    <p className="text-xs text-gray-600">Menang</p>
+                    <p className="text-xs text-gray-600">Wins</p>
                   </div>
                   <div>
                     <p className="text-2xl font-bold text-blue-600">{rumah.leaguePoints ?? rumah.points ?? 0}</p>
@@ -641,7 +641,7 @@ const KRKLPublicDisplay = () => {
         </div>
 
         <div className="mt-8 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg">
-          <h4 className="font-bold text-lg mb-4 text-gray-800">Match Matrix (Siapa vs Siapa)</h4>
+          <h4 className="font-bold text-lg mb-4 text-gray-800">Match Matrix (Who vs Who)</h4>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -703,61 +703,54 @@ const KRKLPublicDisplay = () => {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
       {/* Header */}
       <div className="bg-gradient-to-r from-blue-800 to-purple-800 text-white shadow-xl">
-        <div className="container mx-auto px-4 py-6">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-4xl font-bold flex items-center gap-3">
-                <Trophy className="w-10 h-10 text-yellow-400" />
-                KRKL Tournament 2025
+        <div className="container mx-auto px-4 py-4 sm:py-6">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+            <div className="text-center sm:text-left">
+              <h1 className="text-2xl sm:text-4xl font-bold flex items-center justify-center sm:justify-start gap-2 sm:gap-3">
+                <Trophy className="w-6 h-6 sm:w-10 sm:h-10 text-yellow-400" />
+                KRKL LFSATHLON 2025
               </h1>
-              <p className="text-blue-100 mt-2">Paparan Awam | Public Display</p>
+              <p className="text-blue-100 mt-1 sm:mt-2 text-sm sm:text-base">Public Display</p>
             </div>
-            <div className="text-right">
-              {/* Admin Link */}
-              <Link
-                to="/admin"
-                className="inline-flex items-center gap-2 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition-colors mb-3"
-              >
-                <Settings className="w-4 h-4" />
-                Admin Panel
-                <ArrowLeft className="w-3 h-3" />
-              </Link>
-
-              <div className="flex items-center gap-3">
+            <div className="text-center sm:text-right">
+              <div className="flex flex-row justify-center sm:flex-col sm:items-center gap-2 sm:gap-3">
                 <button
                   onClick={() => setAutoRefresh(!autoRefresh)}
-                  className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${
+                  className={`px-3 py-2 rounded-lg flex items-center justify-center gap-2 transition-all text-sm ${
                     autoRefresh
                       ? 'bg-green-600 hover:bg-green-700 text-white'
                       : 'bg-gray-600 hover:bg-gray-700 text-white'
                   }`}
                 >
                   <RefreshCw className={`w-4 h-4 ${autoRefresh ? 'animate-spin' : ''}`} />
-                  Auto Refresh (1s)
+                  <span className="hidden sm:inline">Auto Refresh (1s)</span>
+                  <span className="sm:hidden">Auto</span>
                 </button>
                 <button
                   onClick={fetchAllData}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 transition-all"
+                  className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 transition-all text-sm"
                 >
                   <RefreshCw className="w-4 h-4" />
-                  Refresh Now
+                  <span className="hidden sm:inline">Refresh Now</span>
+                  <span className="sm:hidden">Refresh</span>
                 </button>
               </div>
-              <div className="flex items-center gap-4 text-sm text-blue-100 mt-2">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-xs sm:text-sm text-blue-100 mt-2">
+                {/* <div className="flex items-center justify-center sm:justify-start gap-2">
                   <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-400' : 'bg-red-400'} ${isOnline ? 'animate-pulse' : ''}`}></div>
-                  <span>{isOnline ? 'Connected' : 'Offline'}</span>
+                  <span className="sm:hidden">{isOnline ? '🟢' : '🔴'}</span>
                 </div>
-                <span>•</span>
-                <div className="flex items-center gap-2">
+                <span className="hidden sm:inline">•</span> */}
+                <div className="flex items-center justify-center sm:justify-start gap-2">
                   <RefreshCw className={`w-3 h-3 ${autoRefresh ? 'animate-spin text-green-400' : 'text-gray-400'}`} />
                   <span className="text-green-400 font-medium">LIVE</span>
                 </div>
-                <span>•</span>
-                <span>Last Update: {lastUpdate.toLocaleTimeString('ms-MY')}</span>
+                <span className="hidden sm:inline">•</span>
+                <span className="hidden sm:inline">Last Update: {lastUpdate.toLocaleTimeString('en-US')}</span>
+                <span className="sm:hidden text-center">{lastUpdate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
               </div>
               {connectionError && (
-                <div className="mt-2 p-2 bg-red-600 bg-opacity-20 border border-red-400 rounded text-sm text-red-100">
+                <div className="mt-2 p-2 bg-red-600 bg-opacity-20 border border-red-400 rounded text-xs sm:text-sm text-red-100">
                   ⚠️ Connection error: Unable to fetch tournament data. Please check your network connection.
                 </div>
               )}
@@ -773,8 +766,8 @@ const KRKLPublicDisplay = () => {
             <div className="flex space-x-1">
               {[
                 { id: 'live', label: 'Live', icon: Eye, color: 'red' },
-                { id: 'standings', label: 'Kedudukan', icon: Trophy, color: 'yellow' },
-                { id: 'graph', label: 'Graf', icon: GitBranch, color: 'purple' }
+                { id: 'standings', label: 'Standings', icon: Trophy, color: 'yellow' },
+                { id: 'graph', label: 'Graph', icon: GitBranch, color: 'purple' }
               ].map((tab) => {
                 const Icon = tab.icon;
                 return (
@@ -806,19 +799,19 @@ const KRKLPublicDisplay = () => {
             <div className="bg-white rounded-lg shadow-lg p-8">
               <h2 className="text-2xl font-bold mb-6 text-green-600 flex items-center gap-2">
                 <Eye className="w-7 h-7" />
-                Keputusan Terkini
+                Latest Results
               </h2>
               {liveResults.length === 0 ? (
                 <div className="text-center py-8">
                   {isOnline ? (
                     <>
-                      <p className="text-gray-500 text-lg">Tiada keputusan lagi</p>
-                      <p className="text-gray-400 text-sm mt-2">Perlawanan akan dimulakan tidak lama lagi</p>
+                      <p className="text-gray-500 text-lg">No results yet</p>
+                      <p className="text-gray-400 text-sm mt-2">Matches will start soon</p>
                     </>
                   ) : (
                     <>
                       <p className="text-gray-500 text-lg">Waiting for data...</p>
-                      <p className="text-gray-400 text-sm mt-2">Sila pastikan sambungan internet dan server tersedia</p>
+                      <p className="text-gray-400 text-sm mt-2">Please ensure internet connection and server are available</p>
                     </>
                   )}
                 </div>
@@ -874,7 +867,7 @@ const KRKLPublicDisplay = () => {
                         </div>
                         {winner && (
                           <div className={`mt-3 text-center font-bold ${winner.color} bg-opacity-20 px-3 py-2 rounded-lg`}>
-                            🏆 Pemenang: {winner.name}
+                            🏆 Winner: {winner.name}
                           </div>
                         )}
                       </div>
@@ -889,7 +882,7 @@ const KRKLPublicDisplay = () => {
               <div className="bg-white rounded-lg shadow-lg p-8">
                 <h2 className="text-2xl font-bold mb-6 text-orange-600 flex items-center gap-2">
                   <RefreshCw className="w-7 h-7 animate-spin" />
-                  Sedang Berlangsung
+                  Ongoing Matches
                 </h2>
                 <div className="space-y-5">
                   {ongoingMatches.map(match => {
@@ -950,12 +943,12 @@ const KRKLPublicDisplay = () => {
                             )}
                             {match.status === 'completed' && (
                               <span className="text-xs bg-green-600 text-white px-3 py-1 rounded-full font-semibold uppercase tracking-wide">
-                                Selesai
+                                Finished
                               </span>
                             )}
                             {match.status === 'pending' && (
                               <span className="text-xs bg-gray-500 text-white px-3 py-1 rounded-full font-semibold uppercase tracking-wide">
-                                Menunggu
+                                Waiting
                               </span>
                             )}
                           </div>
@@ -983,14 +976,14 @@ const KRKLPublicDisplay = () => {
                             ) : (
                               <div className="flex flex-col items-center gap-1">
                                 <span className="text-xs uppercase tracking-wide text-gray-600 font-semibold">Games Won</span>
-                                <span className="text-sm font-semibold text-gray-500">Belum ada game dimenangi</span>
+                                <span className="text-sm font-semibold text-gray-500">No games won yet</span>
                               </div>
                             )}
                             {matchCompleted ? (
                               <span className="text-xs font-semibold text-green-600 uppercase tracking-wide">Match Complete</span>
                             ) : (
                               <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
-                                {activeGameNumber ? `Game Semasa: Game ${activeGameNumber}` : 'Menunggu Game 1 bermula'}
+                                {activeGameNumber ? `Current Game: Game ${activeGameNumber}` : 'Waiting for Game 1 to start'}
                               </span>
                             )}
                             <p className="text-[11px] text-gray-500 uppercase tracking-wide">Best of 5 · First to 11 · Win by 2</p>
@@ -1020,8 +1013,8 @@ const KRKLPublicDisplay = () => {
                               ? (team1Score > team2Score ? rumah1Name : rumah2Name)
                               : null;
                             const instructionText = needsTwoPointFinish
-                              ? 'Perlu beza 2 mata untuk tamatkan game'
-                              : 'Sasaran 11 mata, menang beza 2 selepas deuce';
+                              ? 'Need 2-point difference to finish game'
+                              : 'Target 11 points, win by 2 after deuce';
 
                             return (
                               <div
@@ -1038,12 +1031,12 @@ const KRKLPublicDisplay = () => {
                                   <span className="text-sm font-semibold text-gray-700">Game {game.gameNumber}</span>
                                   {isCompleted && (
                                     <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-medium uppercase tracking-wide">
-                                      Selesai
+                                      Complete
                                     </span>
                                   )}
                                   {!isCompleted && isActive && (
                                     <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium uppercase tracking-wide">
-                                      Aktif
+                                      Active
                                     </span>
                                   )}
                                 </div>
@@ -1058,7 +1051,7 @@ const KRKLPublicDisplay = () => {
                                 </div>
                                 <div className="text-xs text-gray-500 md:text-right font-medium">
                                   {isCompleted
-                                    ? `Pemenang: ${winnerName}`
+                                    ? `Winner: ${winnerName}`
                                     : instructionText}
                                 </div>
                               </div>
@@ -1076,10 +1069,10 @@ const KRKLPublicDisplay = () => {
             <div className="bg-white rounded-lg shadow-lg p-8">
               <h2 className="text-2xl font-bold mb-6 text-blue-600 flex items-center gap-2">
                 <RefreshCw className="w-7 h-7" />
-                Perlawanan Akan Datang
+                Upcoming Matches
               </h2>
               {upcomingMatches.length === 0 ? (
-                <p className="text-gray-500 text-center py-8">Tiada perlawanan dijadualkan</p>
+                <p className="text-gray-500 text-center py-8">No matches scheduled</p>
               ) : (
                 <div className="space-y-4">
                   {upcomingMatches.map(match => {
@@ -1142,22 +1135,22 @@ const KRKLPublicDisplay = () => {
           <div className="bg-white rounded-lg shadow-lg p-8">
             <h2 className="text-3xl font-bold mb-8 text-gray-800 flex items-center gap-3">
               <Trophy className="w-8 h-8 text-yellow-500" />
-              Kedudukan Keseluruhan
+              Overall Standings
             </h2>
 
             {standings.length === 0 ? (
-              <p className="text-gray-500 text-center py-12">Tiada data kedudukan lagi</p>
+              <p className="text-gray-500 text-center py-12">No standings data yet</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b-2 border-gray-300">
                       <th className="text-left py-4 px-4 text-lg font-semibold">#</th>
-                      <th className="text-left py-4 px-4 text-lg font-semibold">Rumah</th>
+                      <th className="text-left py-4 px-4 text-lg font-semibold">House</th>
                       <th className="text-center py-4 px-4 text-lg font-semibold">Spirit</th>
                       <th className="text-center py-4 px-4 text-lg font-semibold">Participation</th>
-                      <th className="text-center py-4 px-4 text-lg font-semibold">Menang</th>
-                      <th className="text-center py-4 px-4 text-lg font-semibold">Kalah</th>
+                      <th className="text-center py-4 px-4 text-lg font-semibold">Wins</th>
+                      <th className="text-center py-4 px-4 text-lg font-semibold">Losses</th>
                       <th className="text-center py-4 px-4 text-lg font-semibold">Total Points</th>
                     </tr>
                   </thead>
@@ -1219,8 +1212,7 @@ const KRKLPublicDisplay = () => {
       {/* Footer */}
       <div className="bg-gray-800 text-white py-6 mt-12">
         <div className="container mx-auto px-4 text-center">
-          <p className="text-lg">KRKL Tournament 2025 - Public Display</p>
-          <p className="text-gray-400 mt-2">Auto-refresh every 1 second</p>
+          <p className="text-lg">KRKL LFSATHLON 2025</p>
         </div>
       </div>
     </div>

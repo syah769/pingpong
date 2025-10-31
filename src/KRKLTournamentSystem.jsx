@@ -4,6 +4,13 @@ import { Trophy, Users, Calendar, Clock, MapPin, Plus, Trash2, Edit2, Save, X, D
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import TournamentReport from './pdf/TournamentReport';
 
+const getTodayLocalISODate = () => {
+  const now = new Date();
+  const offsetInMs = now.getTimezoneOffset() * 60 * 1000;
+  const local = new Date(now.getTime() - offsetInMs);
+  return local.toISOString().split('T')[0];
+};
+
 export default function KRKLTournamentSystem() {
   const [activeTab, setActiveTab] = useState('home');
   const [rumahSukan, setRumahSukan] = useState([]);
@@ -37,7 +44,7 @@ export default function KRKLTournamentSystem() {
   const [showSpiritMarksModal, setShowSpiritMarksModal] = useState(false);
   const [selectedRumahForSpirit, setSelectedRumahForSpirit] = useState(null);
   const [spiritAssessment, setSpiritAssessment] = useState({
-    tournamentDate: new Date().toISOString().split('T')[0],
+    tournamentDate: getTodayLocalISODate(),
     assessorName: '',
     overallScore: 0,
     overallNotes: ''
@@ -587,7 +594,7 @@ export default function KRKLTournamentSystem() {
     if (existingMarks) {
       // Pre-fill form with existing data
       setSpiritAssessment({
-        tournamentDate: existingMarks.tournamentDate,
+        tournamentDate: existingMarks.tournamentDate || getTodayLocalISODate(),
         assessorName: existingMarks.assessorName,
         overallScore: Number(existingMarks.totalScore ?? 0),
         overallNotes: existingMarks.overallNotes || ''
@@ -595,7 +602,7 @@ export default function KRKLTournamentSystem() {
     } else {
       // Create new empty form
       setSpiritAssessment({
-        tournamentDate: new Date().toISOString().split('T')[0],
+        tournamentDate: getTodayLocalISODate(),
         assessorName: '',
         overallScore: 0,
         overallNotes: ''
@@ -1525,7 +1532,7 @@ export default function KRKLTournamentSystem() {
     const pendingMatches = matches.filter(m => m.status === 'pending');
 
     let report = '='.repeat(80) + '\n';
-    report += 'KRKL PING PONG TOURNAMENT 2025 - OFFICIAL REPORT\n';
+    report += 'KRKL LFSATHLON 2025 - OFFICIAL REPORT\n';
     report += '='.repeat(80) + '\n\n';
     report += 'Date: 1 November 2025\n';
     report += 'Venue: Labuan FSA, 17th Floor, Main Office Tower Financial Park Complex\n';
@@ -1763,7 +1770,7 @@ export default function KRKLTournamentSystem() {
             <div>
               <h1 className="text-3xl font-bold flex items-center gap-2">
                 <Trophy className="w-8 h-8" />
-                KRKL PING PONG TOURNAMENT 2025
+                KRKL LFSATHLON 2025
               </h1>
               <p className="text-blue-100 mt-1">Tournament Management System</p>
             </div>
