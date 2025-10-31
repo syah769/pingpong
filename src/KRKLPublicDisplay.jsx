@@ -34,6 +34,25 @@ const KRKLPublicDisplay = () => {
     fetchAllData();
   }, []);
 
+  const formatScore = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '0';
+    const rounded = parseFloat(numeric.toFixed(2));
+    if (Object.is(rounded, -0)) return '0';
+    return rounded.toString();
+  };
+
+  const getTableDisplayName = (match) => {
+    if (!match) return null;
+    const fromName = typeof match.tableName === 'string' && match.tableName.trim() !== '' ? match.tableName.trim() : null;
+    if (fromName) return fromName;
+    const label = match.tableLabel;
+    if (label) return `Table ${label}`;
+    if (match.category === 'Mixed Doubles') return 'Table A';
+    if (match.category === "Men's Doubles") return 'Table B';
+    return null;
+  };
+
   const fetchAllData = async () => {
     // Prevent multiple concurrent requests
     if (window.isFetching) return;
@@ -64,10 +83,9 @@ const KRKLPublicDisplay = () => {
           const team2RumahId = match.team2_rumah_id ?? match.team2RumahId ?? null;
 
           // Find the correct team data using rumahSukanId
-          const team1Data = teamsData.find(t => t.rumahSukanId === team1RumahId);
-          const team2Data = teamsData.find(t => t.rumahSukanId === team2RumahId);
+          const team1Data = teamsData.find(t => t.rumahSukanId === Number(team1RumahId));
+          const team2Data = teamsData.find(t => t.rumahSukanId === Number(team2RumahId));
 
-          // Use the direct team data from API response with proper player pairs
           const team1 = {
             id: team1Data?.id ?? Number(match.team1_id) ?? null,
             rumahSukanId: team1RumahId !== null ? Number(team1RumahId) : null,
@@ -96,6 +114,102 @@ const KRKLPublicDisplay = () => {
             },
           };
 
+          const gamesRaw = Array.isArray(match.games)
+            ? match.games
+            : Array.from({ length: 5 }, (_, idx) => ({
+                gameNumber: idx + 1,
+                team1Score: match[`game${idx + 1}_team1`] ?? 0,
+                team2Score: match[`game${idx + 1}_team2`] ?? 0,
+              }));
+
+          let computedTeam1Wins = 0;
+          let computedTeam2Wins = 0;
+
+          const games = gamesRaw.map((game, idx) => {
+            const gameNumber = Number(game.gameNumber ?? game.game_number ?? idx + 1);
+            const team1Score = Number.isFinite(Number(game.team1Score ?? game.team1_score))
+              ? Number(game.team1Score ?? game.team1_score)
+              : 0;
+            const team2Score = Number.isFinite(Number(game.team2Score ?? game.team2_score))
+              ? Number(game.team2Score ?? game.team2_score)
+              : 0;
+            const scoreDiff = Math.abs(team1Score - team2Score);
+            const maxScore = Math.max(team1Score, team2Score);
+
+            const completed =
+              (game.completed ?? false) ||
+              (maxScore >= 11 && scoreDiff >= 2);
+
+            if (completed) {
+              if (team1Score > team2Score) {
+                computedTeam1Wins += 1;
+              } else if (team2Score > team1Score) {
+                computedTeam2Wins += 1;
+              }
+            }
+
+            return {
+              gameNumber,
+              team1Score,
+              team2Score,
+              completed,
+            };
+          });
+
+          const team1Wins =
+            match.team1Wins !== undefined && match.team1Wins !== null
+              ? Number(match.team1Wins)
+              : computedTeam1Wins;
+          const team2Wins =
+            match.team2Wins !== undefined && match.team2Wins !== null
+              ? Number(match.team2Wins)
+              : computedTeam2Wins;
+
+          const tableIdRaw = match.table_id ?? match.tableId ?? null;
+          const tableNameRaw = match.table_name ?? match.tableName ?? null;
+          const tableTextRaw = match.table ?? match.tableLabel ?? null;
+
+          const deriveTableLabel = () => {
+            if (typeof tableTextRaw === 'string' && tableTextRaw.trim() !== '') {
+              const clean = tableTextRaw.trim();
+              const single = clean.match(/^[A-Za-z]$/);
+              if (single) return single[0].toUpperCase();
+              const fromWord = clean.match(/table\s*([A-Za-z0-9]+)/i);
+              if (fromWord) return fromWord[1].toUpperCase();
+              return clean;
+            }
+            if (typeof tableNameRaw === 'string' && tableNameRaw.trim() !== '') {
+              const clean = tableNameRaw.trim();
+              const fromWord = clean.match(/table\s*([A-Za-z0-9]+)/i);
+              if (fromWord) return fromWord[1].toUpperCase();
+              return clean;
+            }
+            if (tableIdRaw !== undefined && tableIdRaw !== null) {
+              const numericId = Number(tableIdRaw);
+              if (Number.isInteger(numericId)) {
+                if (numericId === 1) return 'A';
+                if (numericId === 2) return 'B';
+                return `${numericId}`;
+              }
+            }
+            return null;
+          };
+
+          const tableLabel = deriveTableLabel();
+          const tableId = tableIdRaw !== undefined && tableIdRaw !== null ? Number(tableIdRaw) : null;
+          const tableName = typeof tableNameRaw === 'string' && tableNameRaw.trim() !== '' ? tableNameRaw.trim() : null;
+          const tableDisplayName = tableName || (tableLabel ? `Table ${tableLabel}` : null);
+
+          const pair1 = {
+            player1: match.pair1_player1 ?? (match.pair1?.player1 ?? ''),
+            player2: match.pair1_player2 ?? (match.pair1?.player2 ?? ''),
+          };
+
+          const pair2 = {
+            player1: match.pair2_player1 ?? (match.pair2?.player1 ?? ''),
+            player2: match.pair2_player2 ?? (match.pair2?.player2 ?? ''),
+          };
+
           return {
             id: match.id,
             matchNumber,
@@ -103,11 +217,24 @@ const KRKLPublicDisplay = () => {
             team2,
             category: match.category ?? '',
             status: match.status ?? 'pending',
-            score1: match.score1 ?? 0,
-            score2: match.score2 ?? 0,
+            score1: match.score1 !== undefined && match.score1 !== null ? Number(match.score1) : team1Wins,
+            score2: match.score2 !== undefined && match.score2 !== null ? Number(match.score2) : team2Wins,
+            team1Wins,
+            team2Wins,
+            games,
+            currentGame: match.current_game !== undefined && match.current_game !== null
+              ? Number(match.current_game)
+              : match.currentGame !== undefined && match.currentGame !== null
+              ? Number(match.currentGame)
+              : games.find(game => !game.completed)?.gameNumber ?? 1,
             points1: match.points1,
             points2: match.points2,
-            table: match.table_name ?? match.table ?? (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : ''),
+            tableId,
+            tableName: tableDisplayName,
+            tableLabel,
+            table: tableDisplayName,
+            pair1,
+            pair2,
             match_time: match.match_time,
             timestamp: match.timestamp ?? match.created_at,
             completed_at: match.completed_at,
@@ -174,7 +301,7 @@ const KRKLPublicDisplay = () => {
 
     // Upcoming matches: pending with no scores OR pending with scores but not playing
     const upcoming = matches.filter(m => m.status === 'pending')
-      .sort((a, b) => new Date(a.match_time || a.created_at) - new Date(b.match_time || b.created_at))
+      .sort((a, b) => (a.matchNumber ?? 0) - (b.matchNumber ?? 0))
       .slice(0, 5);
 
     return {
@@ -385,7 +512,12 @@ const KRKLPublicDisplay = () => {
 
       const matchWins = stat.matchWinPoints ?? stat.wins ?? 0;
       const spiritHouse = housePoints.find(hp => hp.rumahId === houseId);
-      const sportsmanship = spiritHouse ? spiritHouse.spiritPoints : 0;
+      const sportsmanship = spiritHouse ? Number(spiritHouse.spiritPoints ?? 0) : 0;
+      const participation = spiritHouse ? Number(spiritHouse.participationPoints ?? 0) : 0;
+      const placement = spiritHouse ? Number(spiritHouse.placementPoints ?? 0) : 0;
+      const totalPoints = spiritHouse
+        ? Number(spiritHouse.totalPoints ?? (matchWins + participation + sportsmanship + placement))
+        : (matchWins + participation + sportsmanship + placement);
 
       return {
         houseId,
@@ -394,6 +526,8 @@ const KRKLPublicDisplay = () => {
         colorHex: stat.colorHex,
         matchWinPoints: matchWins,
         spiritPoints: sportsmanship,
+        participationPoints: participation,
+        placementPoints: placement,
         leaguePoints: stat.leaguePoints ?? 0,
         gamesDifference: stat.gamesDifference ?? 0,
         wins: stat.wins ?? 0,
@@ -402,11 +536,13 @@ const KRKLPublicDisplay = () => {
         matchesPlayed: stat.matchesPlayed ?? 0,
         pointsFor: stat.pointsFor ?? 0,
         pointsAgainst: stat.pointsAgainst ?? 0,
+        totalPoints,
       };
     });
 
     const sortedHousePoints = [...housePointsBase].sort((a, b) => {
-      if (b.leaguePoints !== a.leaguePoints) return b.leaguePoints - a.leaguePoints;
+      if ((b.totalPoints ?? 0) !== (a.totalPoints ?? 0)) return (b.totalPoints ?? 0) - (a.totalPoints ?? 0);
+      if ((b.spiritPoints ?? 0) !== (a.spiritPoints ?? 0)) return (b.spiritPoints ?? 0) - (a.spiritPoints ?? 0);
       if ((b.matchWinPoints ?? 0) !== (a.matchWinPoints ?? 0)) return (b.matchWinPoints ?? 0) - (a.matchWinPoints ?? 0);
       if ((b.gamesDifference ?? 0) !== (a.gamesDifference ?? 0)) return (b.gamesDifference ?? 0) - (a.gamesDifference ?? 0);
       return (a.name || '').localeCompare(b.name || '');
@@ -691,6 +827,14 @@ const KRKLPublicDisplay = () => {
                   {liveResults.map(match => {
                     const rumah1 = match.team1?.rumahData;
                     const rumah2 = match.team2?.rumahData;
+                    const pair1 = match.pair1;
+                    const pair2 = match.pair2;
+                    const team1Players = pair1?.player1 && pair1?.player2
+                      ? `${pair1.player1} & ${pair1.player2}`
+                      : 'Players';
+                    const team2Players = pair2?.player1 && pair2?.player2
+                      ? `${pair2.player1} & ${pair2.player2}`
+                      : 'Players';
                     const winner = (match.completed_at && match.score1 > match.score2) ? rumah1 : (match.completed_at && match.score2 > match.score1) ? rumah2 : null;
 
                     return (
@@ -698,7 +842,11 @@ const KRKLPublicDisplay = () => {
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-semibold text-green-700">Match #{match.matchNumber} - {match.category}</span>
                           <div className="flex items-center gap-2">
-                            {match.table && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-medium">Meja {match.table}</span>}
+                            {getTableDisplayName(match) && (
+                              <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-medium">
+                                {getTableDisplayName(match)}
+                              </span>
+                            )}
                             <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">SELESAI</span>
                           </div>
                         </div>
@@ -707,14 +855,7 @@ const KRKLPublicDisplay = () => {
                             <span className={`${rumah1?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
                               {rumah1?.name || 'Team 1'}
                             </span>
-                            <div className="text-sm text-gray-600 mt-1">
-                              {match.team1?.mixedPair?.player1 && match.team1?.mixedPair?.player2 ?
-                                `${match.team1.mixedPair.player1} & ${match.team1.mixedPair.player2}` :
-                                match.team1?.mensPair?.player1 && match.team1?.mensPair?.player2 ?
-                                `${match.team1.mensPair.player1} & ${match.team1.mensPair.player2}` :
-                                'Players'
-                              }
-                            </div>
+                            <div className="text-sm text-gray-600 mt-1">{team1Players}</div>
                           </div>
                           <div className="text-center">
                             <div className="text-2xl font-bold text-gray-800">
@@ -728,14 +869,7 @@ const KRKLPublicDisplay = () => {
                             <span className={`${rumah2?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
                               {rumah2?.name || 'Team 2'}
                             </span>
-                            <div className="text-sm text-gray-600 mt-1">
-                              {match.team2?.mixedPair?.player1 && match.team2?.mixedPair?.player2 ?
-                                `${match.team2.mixedPair.player1} & ${match.team2.mixedPair.player2}` :
-                                match.team2?.mensPair?.player1 && match.team2?.mensPair?.player2 ?
-                                `${match.team2.mensPair.player1} & ${match.team2.mensPair.player2}` :
-                                'Players'
-                              }
-                            </div>
+                            <div className="text-sm text-gray-600 mt-1">{team2Players}</div>
                           </div>
                         </div>
                         {winner && (
@@ -757,55 +891,179 @@ const KRKLPublicDisplay = () => {
                   <RefreshCw className="w-7 h-7 animate-spin" />
                   Sedang Berlangsung
                 </h2>
-                <div className="space-y-4">
+                <div className="space-y-5">
                   {ongoingMatches.map(match => {
                     const rumah1 = match.team1?.rumahData;
                     const rumah2 = match.team2?.rumahData;
+                    const rumah1Name = rumah1?.name || match.team1?.rumahName || 'Team 1';
+                    const rumah2Name = rumah2?.name || match.team2?.rumahName || 'Team 2';
+                    const rumah1Color = rumah1?.color || 'bg-gray-400';
+                    const rumah2Color = rumah2?.color || 'bg-gray-400';
+                    const pair1 = match.pair1;
+                    const pair2 = match.pair2;
+                    const team1Players = pair1?.player1 && pair1?.player2
+                      ? `${pair1.player1} & ${pair1.player2}`
+                      : 'Players';
+                    const team2Players = pair2?.player1 && pair2?.player2
+                      ? `${pair2.player1} & ${pair2.player2}`
+                      : 'Players';
+                    const tableDisplay = getTableDisplayName(match);
+                    const matchGames = Array.isArray(match.games) && match.games.length > 0
+                      ? match.games
+                      : Array.from({ length: 5 }, (_, index) => ({
+                          gameNumber: index + 1,
+                          team1Score: 0,
+                          team2Score: 0,
+                          completed: false,
+                        }));
+                    const firstIncompleteGame = matchGames.find(game => !game.completed) || null;
+                    const normalizedCurrentGame = Number.isFinite(Number(match.currentGame))
+                      ? Number(match.currentGame)
+                      : null;
+                    const activeGameNumber = match.status === 'completed'
+                      ? null
+                      : normalizedCurrentGame && normalizedCurrentGame > 0
+                        ? normalizedCurrentGame
+                        : (firstIncompleteGame ? firstIncompleteGame.gameNumber : null);
+                    const matchCompleted = match.status === 'completed';
+                    const normalizedScore1 = Number.isFinite(Number(match.score1)) ? Number(match.score1) : 0;
+                    const normalizedScore2 = Number.isFinite(Number(match.score2)) ? Number(match.score2) : 0;
+                    const hasGameWins = normalizedScore1 > 0 || normalizedScore2 > 0;
 
                     return (
-                      <div key={match.id} className="bg-gradient-to-r from-orange-50 to-amber-50 p-6 rounded-lg border-2 border-orange-200">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-semibold text-orange-700">Match #{match.matchNumber} - {match.category}</span>
+                      <div key={match.id} className="bg-gradient-to-br from-orange-50 via-amber-50 to-orange-100 p-6 rounded-xl border-2 border-orange-200 shadow-inner">
+                        <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-semibold text-orange-700 uppercase tracking-wide">Match #{match.matchNumber}</span>
+                            <span className="text-sm font-medium text-gray-700">{match.category}</span>
+                          </div>
                           <div className="flex items-center gap-2">
-                            {match.table && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded font-medium">Meja {match.table}</span>}
-                            <span className="text-xs bg-orange-600 text-white px-2 py-1 rounded-full animate-pulse">SEDANG BERLANGSUNG</span>
+                            {tableDisplay && (
+                              <span className="text-xs bg-orange-100 text-orange-700 px-3 py-1 rounded-full font-semibold uppercase tracking-wide">
+                                {tableDisplay}
+                              </span>
+                            )}
+                            {match.status === 'playing' && (
+                              <span className="text-xs bg-orange-600 text-white px-3 py-1 rounded-full font-semibold uppercase tracking-wide animate-pulse">
+                                Playing
+                              </span>
+                            )}
+                            {match.status === 'completed' && (
+                              <span className="text-xs bg-green-600 text-white px-3 py-1 rounded-full font-semibold uppercase tracking-wide">
+                                Selesai
+                              </span>
+                            )}
+                            {match.status === 'pending' && (
+                              <span className="text-xs bg-gray-500 text-white px-3 py-1 rounded-full font-semibold uppercase tracking-wide">
+                                Menunggu
+                              </span>
+                            )}
                           </div>
                         </div>
-                        <div className="grid md:grid-cols-3 gap-4 items-center">
+
+                        <div className="grid md:grid-cols-3 gap-4 items-start pb-4 border-b border-orange-200">
                           <div>
-                            <span className={`${rumah1?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
-                              {rumah1?.name || 'Team 1'}
-                            </span>
-                            <div className="text-sm text-gray-600 mt-1">
-                              {match.team1?.mixedPair?.player1 && match.team1?.mixedPair?.player2 ?
-                                `${match.team1.mixedPair.player1} & ${match.team1.mixedPair.player2}` :
-                                match.team1?.mensPair?.player1 && match.team1?.mensPair?.player2 ?
-                                `${match.team1.mensPair.player1} & ${match.team1.mensPair.player2}` :
-                                'Players'
-                              }
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`${rumah1Color} text-white px-2 py-1 rounded text-xs font-semibold uppercase tracking-wide`}>
+                                {rumah1Name}
+                              </span>
                             </div>
+                            <p className="text-sm font-medium text-gray-700">{team1Players}</p>
                           </div>
-                          <div className="text-center">
-                            <div className="text-3xl font-bold text-orange-600">
-                              {match.score1} - {match.score2}
-                            </div>
-                            <div className="text-xs text-gray-500 mt-1">
-                              {new Date(match.timestamp || match.created_at).toLocaleTimeString('ms-MY', { hour: '2-digit', minute: '2-digit' })}
-                            </div>
+                          <div className="flex flex-col items-center gap-2 text-center">
+                            {hasGameWins ? (
+                              <>
+                                <div className="flex items-center gap-3">
+                                  <span className="text-3xl font-black text-orange-700 drop-shadow-sm">{normalizedScore1}</span>
+                                  <span className="text-2xl font-bold text-orange-400">:</span>
+                                  <span className="text-3xl font-black text-orange-700 drop-shadow-sm">{normalizedScore2}</span>
+                                </div>
+                                <p className="text-xs uppercase tracking-wide text-gray-600 font-semibold">Games Won</p>
+                              </>
+                            ) : (
+                              <div className="flex flex-col items-center gap-1">
+                                <span className="text-xs uppercase tracking-wide text-gray-600 font-semibold">Games Won</span>
+                                <span className="text-sm font-semibold text-gray-500">Belum ada game dimenangi</span>
+                              </div>
+                            )}
+                            {matchCompleted ? (
+                              <span className="text-xs font-semibold text-green-600 uppercase tracking-wide">Match Complete</span>
+                            ) : (
+                              <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
+                                {activeGameNumber ? `Game Semasa: Game ${activeGameNumber}` : 'Menunggu Game 1 bermula'}
+                              </span>
+                            )}
+                            <p className="text-[11px] text-gray-500 uppercase tracking-wide">Best of 5 · First to 11 · Win by 2</p>
                           </div>
                           <div className="text-right">
-                            <span className={`${rumah2?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
-                              {rumah2?.name || 'Team 2'}
-                            </span>
-                            <div className="text-sm text-gray-600 mt-1">
-                              {match.team2?.mixedPair?.player1 && match.team2?.mixedPair?.player2 ?
-                                `${match.team2.mixedPair.player1} & ${match.team2.mixedPair.player2}` :
-                                match.team2?.mensPair?.player1 && match.team2?.mensPair?.player2 ?
-                                `${match.team2.mensPair.player1} & ${match.team2.mensPair.player2}` :
-                                'Players'
-                              }
+                            <div className="flex items-center justify-end gap-2 mb-1">
+                              <span className={`${rumah2Color} text-white px-2 py-1 rounded text-xs font-semibold uppercase tracking-wide`}>
+                                {rumah2Name}
+                              </span>
                             </div>
+                            <p className="text-sm font-medium text-gray-700">{team2Players}</p>
                           </div>
+                        </div>
+
+                        <div className="mt-4 space-y-2">
+                          {matchGames.map((game) => {
+                            const team1Score = Number.isFinite(Number(game.team1Score)) ? Number(game.team1Score) : 0;
+                            const team2Score = Number.isFinite(Number(game.team2Score)) ? Number(game.team2Score) : 0;
+                            const scoreDiff = Math.abs(team1Score - team2Score);
+                            const maxScore = Math.max(team1Score, team2Score);
+                            const hasRecordedScores = team1Score > 0 || team2Score > 0;
+                            const meetsWinCondition = maxScore >= 11 && scoreDiff >= 2;
+                            const needsTwoPointFinish = maxScore >= 10 && scoreDiff < 2 && hasRecordedScores;
+                            const isCompleted = game.completed || meetsWinCondition;
+                            const isActive = !isCompleted && activeGameNumber === game.gameNumber;
+                            const winnerName = isCompleted
+                              ? (team1Score > team2Score ? rumah1Name : rumah2Name)
+                              : null;
+                            const instructionText = needsTwoPointFinish
+                              ? 'Perlu beza 2 mata untuk tamatkan game'
+                              : 'Sasaran 11 mata, menang beza 2 selepas deuce';
+
+                            return (
+                              <div
+                                key={`${match.id}-game-${game.gameNumber}`}
+                                className={`flex flex-col md:flex-row md:items-center md:justify-between gap-3 p-3 border rounded-lg ${
+                                  isCompleted
+                                    ? 'border-green-200 bg-green-50'
+                                    : isActive
+                                    ? 'border-blue-200 bg-blue-50'
+                                    : 'border-orange-100 bg-white'
+                                }`}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="text-sm font-semibold text-gray-700">Game {game.gameNumber}</span>
+                                  {isCompleted && (
+                                    <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-medium uppercase tracking-wide">
+                                      Selesai
+                                    </span>
+                                  )}
+                                  {!isCompleted && isActive && (
+                                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium uppercase tracking-wide">
+                                      Aktif
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <div className="w-16 text-center px-3 py-2 border border-gray-300 rounded-lg text-base font-bold bg-white shadow-sm">
+                                    {team1Score}
+                                  </div>
+                                  <span className="font-semibold text-gray-500">:</span>
+                                  <div className="w-16 text-center px-3 py-2 border border-gray-300 rounded-lg text-base font-bold bg-white shadow-sm">
+                                    {team2Score}
+                                  </div>
+                                </div>
+                                <div className="text-xs text-gray-500 md:text-right font-medium">
+                                  {isCompleted
+                                    ? `Pemenang: ${winnerName}`
+                                    : instructionText}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     );
@@ -827,29 +1085,33 @@ const KRKLPublicDisplay = () => {
                   {upcomingMatches.map(match => {
                     const rumah1 = match.team1?.rumahData;
                     const rumah2 = match.team2?.rumahData;
+                    const tableDisplay = getTableDisplayName(match);
+                    const team1Players = match.pair1?.player1 && match.pair1?.player2
+                      ? `${match.pair1.player1} & ${match.pair1.player2}`
+                      : 'Players';
+                    const team2Players = match.pair2?.player1 && match.pair2?.player2
+                      ? `${match.pair2.player1} & ${match.pair2.player2}`
+                      : 'Players';
 
                     return (
                       <div key={match.id} className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-lg border-2 border-blue-200">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-semibold text-blue-700">Match #{match.matchNumber} - {match.category}</span>
-                          <div className="flex items-center gap-2">
-                            {match.table && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">Meja {match.table}</span>}
-                            <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">AKAN DATANG</span>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-semibold text-blue-700">Match #{match.matchNumber} - {match.category}</span>
+                            <div className="flex items-center gap-2">
+                              {tableDisplay && (
+                                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">
+                                  {tableDisplay}
+                                </span>
+                              )}
+                              <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">AKAN DATANG</span>
+                            </div>
                           </div>
-                        </div>
                         <div className="grid md:grid-cols-3 gap-4 items-center">
                           <div>
                             <span className={`${rumah1?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
                               {rumah1?.name || 'Team 1'}
                             </span>
-                            <div className="text-sm text-gray-600 mt-1">
-                              {match.team1?.mixedPair?.player1 && match.team1?.mixedPair?.player2 ?
-                                `${match.team1.mixedPair.player1} & ${match.team1.mixedPair.player2}` :
-                                match.team1?.mensPair?.player1 && match.team1?.mensPair?.player2 ?
-                                `${match.team1.mensPair.player1} & ${match.team1.mensPair.player2}` :
-                                'Players'
-                              }
-                            </div>
+                            <div className="text-sm text-gray-600 mt-1">{team1Players}</div>
                           </div>
                           <div className="text-center">
                             <div className="text-2xl font-bold text-blue-600">
@@ -863,14 +1125,7 @@ const KRKLPublicDisplay = () => {
                             <span className={`${rumah2?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
                               {rumah2?.name || 'Team 2'}
                             </span>
-                            <div className="text-sm text-gray-600 mt-1">
-                              {match.team2?.mixedPair?.player1 && match.team2?.mixedPair?.player2 ?
-                                `${match.team2.mixedPair.player1} & ${match.team2.mixedPair.player2}` :
-                                match.team2?.mensPair?.player1 && match.team2?.mensPair?.player2 ?
-                                `${match.team2.mensPair.player1} & ${match.team2.mensPair.player2}` :
-                                'Players'
-                              }
-                            </div>
+                            <div className="text-sm text-gray-600 mt-1">{team2Players}</div>
                           </div>
                         </div>
                       </div>
@@ -899,12 +1154,11 @@ const KRKLPublicDisplay = () => {
                     <tr className="border-b-2 border-gray-300">
                       <th className="text-left py-4 px-4 text-lg font-semibold">#</th>
                       <th className="text-left py-4 px-4 text-lg font-semibold">Rumah</th>
-                      <th className="text-center py-4 px-4 text-lg font-semibold">Points</th>
-                      <th className="text-center py-4 px-4 text-lg font-semibold">Menang</th>
-                      <th className="text-center py-4 px-4 text-lg font-semibold">Seri</th>
-                      <th className="text-center py-4 px-4 text-lg font-semibold">Kalah</th>
-                      <th className="text-center py-4 px-4 text-lg font-semibold">Games Diff</th>
                       <th className="text-center py-4 px-4 text-lg font-semibold">Spirit</th>
+                      <th className="text-center py-4 px-4 text-lg font-semibold">Participation</th>
+                      <th className="text-center py-4 px-4 text-lg font-semibold">Menang</th>
+                      <th className="text-center py-4 px-4 text-lg font-semibold">Kalah</th>
+                      <th className="text-center py-4 px-4 text-lg font-semibold">Total Points</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -929,24 +1183,25 @@ const KRKLPublicDisplay = () => {
                           </div>
                         </td>
                         <td className="text-center py-4 px-4">
-                          <span className="text-2xl font-bold text-blue-600">{team.leaguePoints}</span>
+                          <span className="text-lg font-semibold text-purple-600">
+                            {formatScore(team.spiritPoints)}
+                          </span>
+                        </td>
+                        <td className="text-center py-4 px-4">
+                          <span className="text-lg font-semibold text-orange-600">
+                            {Number.isFinite(team.participationPoints) ? team.participationPoints : 0}
+                          </span>
                         </td>
                         <td className="text-center py-4 px-4">
                           <span className="text-lg font-semibold text-green-600">{team.wins}</span>
                         </td>
                         <td className="text-center py-4 px-4">
-                          <span className="text-lg font-semibold text-gray-600">{team.draws}</span>
-                        </td>
-                        <td className="text-center py-4 px-4">
                           <span className="text-lg font-semibold text-red-600">{team.losses}</span>
                         </td>
                         <td className="text-center py-4 px-4">
-                          <span className={`text-lg font-semibold ${team.gamesDifference >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {team.gamesDifference > 0 ? '+' : ''}{team.gamesDifference}
+                          <span className="text-lg font-semibold text-indigo-600">
+                            {formatScore(team.totalPoints)}
                           </span>
-                        </td>
-                        <td className="text-center py-4 px-4">
-                          <span className="text-lg font-semibold text-purple-600">{team.spiritPoints.toFixed(2)}</span>
                         </td>
                       </tr>
                     ))}

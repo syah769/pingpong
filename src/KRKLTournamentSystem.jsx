@@ -21,6 +21,7 @@ export default function KRKLTournamentSystem() {
   });
 
   const [matches, setMatches] = useState([]);
+  const [editingGameScores, setEditingGameScores] = useState({});
   const [liveResults, setLiveResults] = useState([]);
 
   // Team table assignments state
@@ -32,21 +33,34 @@ export default function KRKLTournamentSystem() {
 
   // Spirit marks assessment state
   const [spiritMarks, setSpiritMarks] = useState([]);
-  const [spiritCriteria, setSpiritCriteria] = useState([]);
   const [housePoints, setHousePoints] = useState([]);
   const [showSpiritMarksModal, setShowSpiritMarksModal] = useState(false);
   const [selectedRumahForSpirit, setSelectedRumahForSpirit] = useState(null);
   const [spiritAssessment, setSpiritAssessment] = useState({
     tournamentDate: new Date().toISOString().split('T')[0],
     assessorName: '',
-    sportsmanshipScore: 0.0,
-    teamworkScore: 0.0,
-    seatArrangementScore: 0.0,
-    sportsmanshipNotes: '',
-    teamworkNotes: '',
-    seatArrangementNotes: '',
+    overallScore: 0,
     overallNotes: ''
   });
+
+  const formatScore = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '0';
+    const rounded = parseFloat(numeric.toFixed(2));
+    if (Object.is(rounded, -0)) return '0';
+    return rounded.toString();
+  };
+
+  const getTableDisplayName = (match) => {
+    if (!match) return null;
+    const fromName = typeof match.tableName === 'string' && match.tableName.trim() !== '' ? match.tableName.trim() : null;
+    if (fromName) return fromName;
+    const label = match.tableLabel;
+    if (label) return `Table ${label}`;
+    if (match.category === 'Mixed Doubles') return 'Table A';
+    if (match.category === "Men's Doubles") return 'Table B';
+    return null;
+  };
 
   // API endpoint (use local dev domain)
   const API_URL = 'http://pingpong.test/krkl-tournament/api.php';
@@ -62,7 +76,6 @@ export default function KRKLTournamentSystem() {
     fetchTables();
     fetchTeamTableAssignments();
     fetchSpiritMarks();
-    fetchSpiritCriteria();
     fetchHousePoints();
   }, []);
 
@@ -115,6 +128,89 @@ export default function KRKLTournamentSystem() {
               rumahName: match.team2_rumah_name ?? match.team2RumahName ?? '',
             };
 
+            const gamesFromApi = Array.isArray(match.games)
+              ? match.games
+              : Array.from({ length: 5 }, (_, index) => ({
+                  gameNumber: index + 1,
+                  team1Score: match[`game${index + 1}_team1`] ?? 0,
+                  team2Score: match[`game${index + 1}_team2`] ?? 0,
+                }));
+
+            let computedTeam1Wins = 0;
+            let computedTeam2Wins = 0;
+
+            const games = gamesFromApi.map((game, index) => {
+              const gameNumber = Number(game.gameNumber ?? game.game_number ?? index + 1);
+              const rawTeam1Score = game.team1Score ?? game.team1_score ?? 0;
+              const rawTeam2Score = game.team2Score ?? game.team2_score ?? 0;
+              const team1Score = Number.isFinite(Number(rawTeam1Score)) ? Number(rawTeam1Score) : 0;
+              const team2Score = Number.isFinite(Number(rawTeam2Score)) ? Number(rawTeam2Score) : 0;
+              const scoreDiff = Math.abs(team1Score - team2Score);
+              const maxScore = Math.max(team1Score, team2Score);
+              const completed =
+                (game.completed ?? false) ||
+                (maxScore >= 11 && scoreDiff >= 2);
+
+              if (completed) {
+                if (team1Score > team2Score) {
+                  computedTeam1Wins += 1;
+                } else if (team2Score > team1Score) {
+                  computedTeam2Wins += 1;
+                }
+              }
+
+              return {
+                gameNumber,
+                team1Score,
+                team2Score,
+                completed,
+              };
+            });
+
+            const team1Wins =
+              match.team1Wins !== undefined && match.team1Wins !== null
+                ? Number(match.team1Wins)
+                : computedTeam1Wins;
+            const team2Wins =
+              match.team2Wins !== undefined && match.team2Wins !== null
+                ? Number(match.team2Wins)
+                : computedTeam2Wins;
+
+            const tableIdRaw = match.table_id ?? match.tableId ?? null;
+            const tableNameRaw = match.table_name ?? match.tableName ?? null;
+            const tableTextRaw = match.table ?? match.tableLabel ?? null;
+
+            const deriveTableLabel = () => {
+              if (typeof tableTextRaw === 'string' && tableTextRaw.trim() !== '') {
+                const clean = tableTextRaw.trim();
+                const matchLetter = clean.match(/^[A-Za-z]$/);
+                if (matchLetter) return matchLetter[0].toUpperCase();
+                const fromTableWord = clean.match(/table\s*([A-Za-z0-9]+)/i);
+                if (fromTableWord) return fromTableWord[1].toUpperCase();
+                return clean;
+              }
+              if (typeof tableNameRaw === 'string' && tableNameRaw.trim() !== '') {
+                const clean = tableNameRaw.trim();
+                const fromTableWord = clean.match(/table\s*([A-Za-z0-9]+)/i);
+                if (fromTableWord) return fromTableWord[1].toUpperCase();
+                return clean;
+              }
+              if (tableIdRaw !== undefined && tableIdRaw !== null) {
+                const numericId = Number(tableIdRaw);
+                if (Number.isInteger(numericId)) {
+                  if (numericId === 1) return 'A';
+                  if (numericId === 2) return 'B';
+                  return `${numericId}`;
+                }
+              }
+              return null;
+            };
+
+            const tableLabel = deriveTableLabel();
+            const explicitTableName = typeof tableNameRaw === 'string' && tableNameRaw.trim() !== '' ? tableNameRaw.trim() : null;
+            const tableDisplayName = explicitTableName || (tableLabel ? `Table ${tableLabel}` : null);
+            const tableId = tableIdRaw !== undefined && tableIdRaw !== null ? Number(tableIdRaw) : null;
+
             return {
               id: match.id ?? match.match_id ?? null,
               matchNumber: Number(matchNumber),
@@ -132,8 +228,20 @@ export default function KRKLTournamentSystem() {
                 player1: match.pair2_player1 ?? (match.pair2?.player1 ?? ''),
                 player2: match.pair2_player2 ?? (match.pair2?.player2 ?? ''),
               },
-              score1: match.score1 !== undefined && match.score1 !== null ? Number(match.score1) : 0,
-              score2: match.score2 !== undefined && match.score2 !== null ? Number(match.score2) : 0,
+              tableId,
+              tableName: tableDisplayName,
+              tableLabel,
+              table: tableDisplayName,
+              games,
+              currentGame: match.current_game !== undefined && match.current_game !== null
+                ? Number(match.current_game)
+                : match.currentGame !== undefined && match.currentGame !== null
+                ? Number(match.currentGame)
+                : games.find((game) => !game.completed)?.gameNumber ?? 1,
+              score1: match.score1 !== undefined && match.score1 !== null ? Number(match.score1) : team1Wins,
+              score2: match.score2 !== undefined && match.score2 !== null ? Number(match.score2) : team2Wins,
+              team1Wins,
+              team2Wins,
               points1: match.points1 !== undefined && match.points1 !== null ? Number(match.points1) : undefined,
               points2: match.points2 !== undefined && match.points2 !== null ? Number(match.points2) : undefined,
               status: match.status ?? 'pending',
@@ -144,6 +252,22 @@ export default function KRKLTournamentSystem() {
           })
         : [];
       setMatches(normalized);
+      const initialScores = {};
+      normalized.forEach((match) => {
+        if (!match?.id) {
+          return;
+        }
+        const scoreByGame = {};
+        (match.games || []).forEach((game) => {
+          const hasInput = (game?.team1Score ?? 0) !== 0 || (game?.team2Score ?? 0) !== 0;
+          scoreByGame[game.gameNumber] = {
+            team1: hasInput && game.team1Score !== undefined && game.team1Score !== null ? String(game.team1Score) : '',
+            team2: hasInput && game.team2Score !== undefined && game.team2Score !== null ? String(game.team2Score) : '',
+          };
+        });
+        initialScores[match.id] = scoreByGame;
+      });
+      setEditingGameScores(initialScores);
     } catch (error) {
       console.error('Error fetching matches:', error);
       setMatches([]);
@@ -183,17 +307,7 @@ export default function KRKLTournamentSystem() {
     }
   };
 
-  const fetchSpiritCriteria = async () => {
-    try {
-      const response = await fetch(`${API_URL}?resource=spirit_criteria`);
-      const data = await response.json();
-      setSpiritCriteria(data);
-    } catch (error) {
-      console.error('Error fetching spirit criteria:', error);
-      setSpiritCriteria([]);
-    }
-  };
-
+  
   const fetchHousePoints = async () => {
     try {
       const response = await fetch(`${API_URL}?resource=house_points`);
@@ -475,12 +589,7 @@ export default function KRKLTournamentSystem() {
       setSpiritAssessment({
         tournamentDate: existingMarks.tournamentDate,
         assessorName: existingMarks.assessorName,
-        sportsmanshipScore: existingMarks.sportsmanshipScore,
-        teamworkScore: existingMarks.teamworkScore,
-        seatArrangementScore: existingMarks.seatArrangementScore,
-        sportsmanshipNotes: existingMarks.sportsmanshipNotes || '',
-        teamworkNotes: existingMarks.teamworkNotes || '',
-        seatArrangementNotes: existingMarks.seatArrangementNotes || '',
+        overallScore: Number(existingMarks.totalScore ?? 0),
         overallNotes: existingMarks.overallNotes || ''
       });
     } else {
@@ -488,12 +597,7 @@ export default function KRKLTournamentSystem() {
       setSpiritAssessment({
         tournamentDate: new Date().toISOString().split('T')[0],
         assessorName: '',
-        sportsmanshipScore: 0.0,
-        teamworkScore: 0.0,
-        seatArrangementScore: 0.0,
-        sportsmanshipNotes: '',
-        teamworkNotes: '',
-        seatArrangementNotes: '',
+        overallScore: 0,
         overallNotes: ''
       });
     }
@@ -508,16 +612,30 @@ export default function KRKLTournamentSystem() {
     }
 
     try {
+      const scoreValue = Number.isFinite(Number(spiritAssessment.overallScore))
+        ? Math.max(0, Math.min(1, Number(spiritAssessment.overallScore)))
+        : 0;
+
+      const payload = {
+        action: 'save_spirit_marks',
+        rumahId: selectedRumahForSpirit.id,
+        tournamentDate: spiritAssessment.tournamentDate,
+        assessorName: spiritAssessment.assessorName,
+        sportsmanshipScore: scoreValue,
+        teamworkScore: 0,
+        seatArrangementScore: 0,
+        sportsmanshipNotes: '',
+        teamworkNotes: '',
+        seatArrangementNotes: '',
+        overallNotes: spiritAssessment.overallNotes || ''
+      };
+
       const response = await fetch(`${API_URL}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          action: 'save_spirit_marks',
-          rumahId: selectedRumahForSpirit.id,
-          ...spiritAssessment
-        })
+        body: JSON.stringify(payload)
       });
 
       const result = await response.json();
@@ -536,7 +654,7 @@ export default function KRKLTournamentSystem() {
     }
   };
 
-  const calculateHousePoints = async () => {
+  const runHousePointsRecalc = async ({ silent = false } = {}) => {
     try {
       const response = await fetch(`${API_URL}`, {
         method: 'POST',
@@ -551,16 +669,26 @@ export default function KRKLTournamentSystem() {
 
       const result = await response.json();
       if (result && result.success) {
-        alert('House points calculated successfully');
+        if (!silent) {
+          alert('House points calculated successfully');
+        }
         await fetchHousePoints();
       } else {
         const message = result && result.message ? result.message : 'Failed to calculate house points';
-        alert(message);
+        if (!silent) {
+          alert(message);
+        }
       }
     } catch (error) {
       console.error('Error calculating house points:', error);
-      alert('Error calculating house points. Please try again.');
+      if (!silent) {
+        alert('Error calculating house points. Please try again.');
+      }
     }
+  };
+
+  const calculateHousePoints = async () => {
+    await runHousePointsRecalc({ silent: false });
   };
 
   // Match Management
@@ -602,33 +730,35 @@ export default function KRKLTournamentSystem() {
     }
   };
 
-  const updateMatchScore = async (matchId, score1, score2) => {
+  const handleGameScoreChange = (matchId, gameNumber, teamKey, value) => {
+    if (!/^\d*$/.test(value)) {
+      return;
+    }
+    setEditingGameScores((prevScores) => {
+      const matchScores = { ...(prevScores[matchId] || {}) };
+      const gameScores = { team1: '', team2: '', ...(matchScores[gameNumber] || {}) };
+      gameScores[teamKey] = value;
+
+      return {
+        ...prevScores,
+        [matchId]: {
+          ...matchScores,
+          [gameNumber]: gameScores,
+        },
+      };
+    });
+  };
+
+  const updateMatchGameScore = async (matchId, gameNumber, team1ScoreInput, team2ScoreInput) => {
+    const parsedTeam1 = team1ScoreInput === '' ? NaN : parseInt(team1ScoreInput, 10);
+    const parsedTeam2 = team2ScoreInput === '' ? NaN : parseInt(team2ScoreInput, 10);
+
+    if (Number.isNaN(parsedTeam1) || Number.isNaN(parsedTeam2)) {
+      alert('Sila masukkan markah untuk kedua-dua pasukan sebelum simpan.');
+      return;
+    }
+
     try {
-      // Find the current match to log score changes
-      const currentMatch = matches.find(m => m.id === matchId);
-      if (currentMatch) {
-        const oldScore1 = currentMatch.score1;
-        const oldScore2 = currentMatch.score2;
-        const newScore1 = parseInt(score1) || 0;
-        const newScore2 = parseInt(score2) || 0;
-
-        // Log score changes
-        if (newScore1 > oldScore1) {
-          console.log(`🔼 Score UP - Match ${matchId}: Team 1 score increased from ${oldScore1} to ${newScore1}`);
-        } else if (newScore1 < oldScore1) {
-          console.log(`🔽 Score DOWN - Match ${matchId}: Team 1 score decreased from ${oldScore1} to ${newScore1}`);
-        }
-
-        if (newScore2 > oldScore2) {
-          console.log(`🔼 Score UP - Match ${matchId}: Team 2 score increased from ${oldScore2} to ${newScore2}`);
-        } else if (newScore2 < oldScore2) {
-          console.log(`🔽 Score DOWN - Match ${matchId}: Team 2 score decreased from ${oldScore2} to ${newScore2}`);
-        }
-
-        // Log the complete score update
-        console.log(`📊 Score Update - Match ${matchId}: [${oldScore1}-${oldScore2}] → [${newScore1}-${newScore2}]`);
-      }
-
       const response = await fetch(API_URL, {
         method: 'PUT',
         headers: {
@@ -636,20 +766,18 @@ export default function KRKLTournamentSystem() {
         },
         body: JSON.stringify({
           action: 'update_match_score',
-          matchId: matchId,
-          score1: parseInt(score1) || 0,
-          score2: parseInt(score2) || 0
-        })
+          matchId,
+          gameNumber,
+          team1Score: parsedTeam1,
+          team2Score: parsedTeam2,
+        }),
       });
 
-      // Check if response is ok before parsing JSON
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const responseText = await response.text();
-      console.log('Raw API response:', responseText);
-
       let result;
       try {
         result = JSON.parse(responseText);
@@ -660,14 +788,17 @@ export default function KRKLTournamentSystem() {
       }
 
       if (result.success) {
-        await fetchMatches(); // Refresh matches from database
-        alert('Match score updated successfully!');
+        await fetchMatches();
+        if (result.matchComplete || result.gameComplete) {
+          await runHousePointsRecalc({ silent: true });
+        }
+        alert(result.message || `Skor Game ${gameNumber} berjaya dikemaskini.`);
       } else {
-        alert('Error updating match score: ' + (result.message || 'Unknown error'));
+        alert('Error updating game score: ' + (result.message || 'Unknown error'));
       }
     } catch (error) {
-      console.error('Error updating match score:', error);
-      alert('Error updating match score. Please try again.');
+      console.error('Error updating game score:', error);
+      alert('Error updating game score. Please try again.');
     }
   };
 
@@ -752,6 +883,7 @@ export default function KRKLTournamentSystem() {
 
       if (result.success) {
         await fetchMatches(); // Refresh matches from database
+        await runHousePointsRecalc({ silent: true });
         alert('Match marked as completed successfully!');
       } else {
         alert('Error finalizing match: ' + (result.message || 'Unknown error'));
@@ -762,8 +894,252 @@ export default function KRKLTournamentSystem() {
     }
   };
 
+  const renderMatchCard = (match) => {
+    if (!match) {
+      return null;
+    }
+
+    const rumah1 = rumahSukan.find(r => r.id === match.team1?.rumahSukanId);
+    const rumah2 = rumahSukan.find(r => r.id === match.team2?.rumahSukanId);
+    const rumah1Name = rumah1?.name || match.team1?.rumahName || 'Team 1';
+    const rumah2Name = rumah2?.name || match.team2?.rumahName || 'Team 2';
+    const rumah1Color = rumah1?.color || 'bg-gray-400';
+    const rumah2Color = rumah2?.color || 'bg-gray-400';
+    const tableDisplay = getTableDisplayName(match);
+    const matchGames = Array.isArray(match.games) && match.games.length > 0
+      ? match.games
+      : Array.from({ length: 5 }, (_, index) => ({
+          gameNumber: index + 1,
+          team1Score: 0,
+          team2Score: 0,
+          completed: false,
+        }));
+    const firstIncompleteGame = matchGames.find(game => !game.completed) || null;
+    const normalizedCurrentGame = Number.isFinite(Number(match.currentGame))
+      ? Number(match.currentGame)
+      : null;
+    const activeGameNumber = match.status === 'completed'
+      ? null
+      : normalizedCurrentGame && normalizedCurrentGame > 0
+        ? normalizedCurrentGame
+        : (firstIncompleteGame ? firstIncompleteGame.gameNumber : null);
+    const matchScores = editingGameScores[match.id] || {};
+    const normalizedScore1 = Number.isFinite(Number(match.score1)) ? Number(match.score1) : 0;
+    const normalizedScore2 = Number.isFinite(Number(match.score2)) ? Number(match.score2) : 0;
+    const hasGameWins = normalizedScore1 > 0 || normalizedScore2 > 0;
+    const matchCompleted = match.status === 'completed';
+
+    const containerStateClass =
+      match.status === 'completed'
+        ? 'bg-green-50 border-green-200'
+        : match.status === 'playing'
+        ? 'bg-blue-50 border-blue-200'
+        : (match.score1 > 0 || match.score2 > 0)
+        ? 'bg-orange-50 border-orange-200'
+        : 'bg-gray-50 border-gray-200';
+
+    return (
+      <div key={match.id} className={`p-4 rounded-lg border-2 ${containerStateClass}`}>
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-sm font-semibold text-gray-600">Match #{match.matchNumber}</span>
+          <div className="flex items-center gap-2">
+            {tableDisplay && (
+              <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded font-medium">
+                {tableDisplay}
+              </span>
+            )}
+            {match.status === 'completed' && (
+              <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">Selesai</span>
+            )}
+            {match.status === 'playing' && (
+              <>
+                <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full animate-pulse">Playing</span>
+                <button
+                  onClick={() => finalizeMatch(match.id)}
+                  className="text-xs bg-orange-600 text-white px-3 py-1 rounded-full hover:bg-orange-700 transition-colors"
+                >
+                  Selesai
+                </button>
+              </>
+            )}
+            {match.status === 'pending' && (
+              <>
+                {(match.score1 > 0 || match.score2 > 0) ? (
+                  <button
+                    onClick={() => startMatch(match.id)}
+                    className="text-xs bg-blue-600 text-white px-3 py-1 rounded-full hover:bg-blue-700 transition-colors"
+                  >
+                    Playing
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => startMatch(match.id)}
+                    className="text-xs bg-gray-600 text-white px-3 py-1 rounded-full hover:bg-gray-700 transition-colors"
+                  >
+                    Start
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-4 items-start">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`${rumah1Color} text-white px-2 py-1 rounded text-xs font-medium`}>
+                {rumah1Name}
+              </span>
+            </div>
+            <p className="text-sm font-medium">
+              {(match.pair1?.player1 || '-')}{' '}
+              &amp; {(match.pair1?.player2 || '-')}
+            </p>
+          </div>
+          <div className="flex flex-col items-center justify-center gap-2 text-center">
+            {hasGameWins ? (
+              <>
+                <div className="flex items-center gap-3">
+                  <span className="text-3xl font-bold text-gray-800">{normalizedScore1}</span>
+                  <span className="text-2xl font-bold text-gray-400">:</span>
+                  <span className="text-3xl font-bold text-gray-800">{normalizedScore2}</span>
+                </div>
+                <p className="text-xs uppercase tracking-wide text-gray-500">Games Won</p>
+              </>
+            ) : (
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-xs uppercase tracking-wide text-gray-500">Games Won</span>
+                <span className="text-sm font-semibold text-gray-500">Belum ada game dimenangi</span>
+              </div>
+            )}
+            {matchCompleted ? (
+              <span className="text-xs font-semibold text-green-600">Match Complete</span>
+            ) : (
+              <span className="text-xs font-semibold text-blue-600">
+                {activeGameNumber ? `Game Semasa: Game ${activeGameNumber}` : 'Menunggu Game 1 bermula'}
+              </span>
+            )}
+            <p className="text-[11px] text-gray-500">Best of 5 · First to 11 · Win by 2</p>
+          </div>
+          <div className="text-right">
+            <div className="flex items-center justify-end gap-2 mb-1">
+              <span className={`${rumah2Color} text-white px-2 py-1 rounded text-xs font-medium`}>
+                {rumah2Name}
+              </span>
+            </div>
+            <p className="text-sm font-medium">
+              {(match.pair2?.player1 || '-')}{' '}
+              &amp; {(match.pair2?.player2 || '-')}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-2">
+          {matchGames.length === 0 ? (
+            <p className="text-sm text-gray-500">Tiada rekod game lagi.</p>
+          ) : (
+            matchGames.map((game) => {
+              const editingScoresForGame = matchScores[game.gameNumber] || { team1: '', team2: '' };
+              const team1Value = editingScoresForGame.team1 ?? '';
+              const team2Value = editingScoresForGame.team2 ?? '';
+              const numericTeam1 = team1Value === '' ? NaN : parseInt(team1Value, 10);
+              const numericTeam2 = team2Value === '' ? NaN : parseInt(team2Value, 10);
+              const recordedTeam1 = game.team1Score ?? 0;
+              const recordedTeam2 = game.team2Score ?? 0;
+              const hasRecordedScores = (recordedTeam1 !== 0) || (recordedTeam2 !== 0);
+              const scoreDiff = Math.abs(recordedTeam1 - recordedTeam2);
+              const maxScore = Math.max(recordedTeam1, recordedTeam2);
+              const meetsWinCondition = maxScore >= 11 && scoreDiff >= 2;
+              const needsTwoPointFinish = maxScore >= 10 && scoreDiff < 2 && hasRecordedScores;
+              const valuesUnchanged = hasRecordedScores &&
+                !Number.isNaN(numericTeam1) &&
+                !Number.isNaN(numericTeam2) &&
+                numericTeam1 === recordedTeam1 &&
+                numericTeam2 === recordedTeam2;
+              const isCompleted = game.completed || meetsWinCondition;
+              const isActive = !isCompleted && activeGameNumber === game.gameNumber;
+              const disableInputs = matchCompleted;
+              const disableSave = disableInputs || team1Value === '' || team2Value === '' || valuesUnchanged;
+              const rowHighlight = isCompleted
+                ? 'border-green-200 bg-green-50'
+                : isActive
+                ? 'border-blue-200 bg-blue-50'
+                : 'border-gray-200 bg-white';
+              const winnerName = isCompleted
+                ? (game.team1Score > game.team2Score ? rumah1Name : rumah2Name)
+                : null;
+              const instructionText = needsTwoPointFinish
+                ? 'Perlu beza 2 mata untuk tamatkan game'
+                : 'Sasaran 11 mata, menang beza 2 selepas deuce';
+
+              return (
+                <div
+                  key={`${match.id}-game-${game.gameNumber}`}
+                  className={`flex flex-col md:flex-row md:items-center md:justify-between gap-3 p-3 border rounded-lg ${rowHighlight}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-semibold text-gray-700">Game {game.gameNumber}</span>
+                    {isCompleted && (
+                      <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">Selesai</span>
+                    )}
+                    {!isCompleted && isActive && (
+                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">Aktif</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      value={team1Value}
+                      disabled={disableInputs}
+                      onChange={(e) => handleGameScoreChange(match.id, game.gameNumber, 'team1', e.target.value)}
+                      className={`w-16 text-center px-2 py-2 border border-gray-300 rounded-lg text-base font-semibold focus:ring-2 focus:ring-blue-500 ${
+                        disableInputs ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''
+                      }`}
+                    />
+                    <span className="font-semibold text-gray-500">:</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={team2Value}
+                      disabled={disableInputs}
+                      onChange={(e) => handleGameScoreChange(match.id, game.gameNumber, 'team2', e.target.value)}
+                      className={`w-16 text-center px-2 py-2 border border-gray-300 rounded-lg text-base font-semibold focus:ring-2 focus:ring-blue-500 ${
+                        disableInputs ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => updateMatchGameScore(match.id, game.gameNumber, team1Value, team2Value)}
+                      disabled={disableSave}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        disableSave
+                          ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                          : 'bg-blue-600 text-white hover:bg-blue-700'
+                      }`}
+                    >
+                      Simpan
+                    </button>
+                  </div>
+                  <div className="text-xs text-gray-500 md:text-right">
+                    {isCompleted
+                      ? `Pemenang: ${winnerName}`
+                      : instructionText}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const getUpcomingMatches = () => {
-    return matches.filter(m => m.status === 'pending').slice(0, 5);
+    return matches
+      .filter(m => m.status === 'pending')
+      .sort((a, b) => (a.matchNumber ?? 0) - (b.matchNumber ?? 0))
+      .slice(0, 5);
   };
 
   const getNextOpponents = (rumahId) => {
@@ -1066,7 +1442,7 @@ export default function KRKLTournamentSystem() {
 
       // Get spirit points from housePoints state
       const spiritHouse = housePoints.find(hp => hp.rumahId === houseId);
-      const sportsmanship = spiritHouse ? spiritHouse.spiritPoints : 0;
+      const sportsmanship = spiritHouse ? Number(spiritHouse.spiritPoints ?? 0) : 0;
 
       const categoryWins = categoryTitlesCount.get(houseId) ?? 0;
       const totalPoints = placement + participation + matchWins + sportsmanship;
@@ -1122,6 +1498,16 @@ export default function KRKLTournamentSystem() {
   const categoryStandings = standingsSummary?.categoryStandings ?? {};
   const categoryTitlesCount = standingsSummary?.categoryTitlesCount ?? new Map();
 
+  const housePointsById = useMemo(() => {
+    const map = new Map();
+    housePointsTable.forEach((entry) => {
+      if (entry && entry.houseId != null) {
+        map.set(Number(entry.houseId), entry);
+      }
+    });
+    return map;
+  }, [housePointsTable]);
+
   const pdfDocument = useMemo(() => (
     <TournamentReport
       rumahSukan={rumahSukan}
@@ -1159,17 +1545,16 @@ export default function KRKLTournamentSystem() {
     report += 'LEAGUE STANDINGS (Win = 1 point, Loss = 0 points)\n';
     report += 'Tie-Break: Head-to-head > Games diff > Points diff > Playoff\n';
     report += '-'.repeat(80) + '\n';
-    report += ' Pos | Rumah Sukan        | Pts | W | L | D | Games +/- | H2H pts\n';
+    report += ' Pos | Rumah Sukan        | W | L | Spirit | Total Pts\n';
     report += '-'.repeat(80) + '\n';
     standings.forEach((s, i) => {
-      const diff = s.gamesDifference ?? (s.gamesWon - s.gamesLost);
-      const headPoints = standings.reduce((acc, opponent) => {
-        if (opponent.id === s.id) return acc;
-        return acc + (s.headToHead?.[opponent.id]?.wins ?? 0);
-      }, 0);
-      report += `${String(i + 1).padStart(4)} | ${s.name.padEnd(18)} | ${String(s.leaguePoints ?? s.points ?? 0).padStart(3)} | `;
-      report += `${String(s.wins).padStart(1)} | ${String(s.losses).padStart(1)} | ${String(s.draws).padStart(1)} | `;
-      report += `${diff >= 0 ? '+' : ''}${diff.toString().padStart(2)} | ${String(headPoints).padStart(7)}\n`;
+      const houseSummary = housePointsById.get(Number(s.id)) || housePointsById.get(s.id);
+      const spiritPoints = houseSummary?.spiritPoints ?? 0;
+      const totalPoints = houseSummary?.totalPoints ?? (s.leaguePoints ?? s.points ?? 0);
+      const spiritDisplay = formatScore(spiritPoints);
+      const totalDisplay = formatScore(totalPoints);
+      report += `${String(i + 1).padStart(4)} | ${s.name.padEnd(18)} | ${String(s.wins ?? 0).padStart(1)} | ${String(s.losses ?? 0).padStart(1)} | `;
+      report += `${spiritDisplay.padStart(6)} | ${totalDisplay.padStart(9)}\n`;
     });
     report += '\n';
 
@@ -1916,92 +2301,9 @@ export default function KRKLTournamentSystem() {
                   <div>
                     <h3 className="text-xl font-bold mb-4 text-purple-600">Mixed Doubles</h3>
                     <div className="space-y-3">
-                      {matches.filter(m => m.category === 'Mixed Doubles').map(match => {
-                        const rumah1 = rumahSukan.find(r => r.id === match.team1.rumahSukanId);
-                        const rumah2 = rumahSukan.find(r => r.id === match.team2.rumahSukanId);
-                        return (
-                          <div key={match.id} className={`p-4 rounded-lg border-2 ${match.status === 'completed' ? 'bg-green-50 border-green-200' : match.status === 'playing' ? 'bg-blue-50 border-blue-200' : (match.score1 > 0 || match.score2 > 0) ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
-                            <div className="flex items-center justify-between mb-3">
-                              <span className="text-sm font-semibold text-gray-600">Match #{match.matchNumber}</span>
-                              <div className="flex items-center gap-2">
-                                {(match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')) && (
-                                  <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded font-medium">
-                                    Meja {match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')}
-                                  </span>
-                                )}
-                                {match.status === 'completed' && (
-                                  <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">Selesai</span>
-                                )}
-                                {match.status === 'playing' && (
-                                  <>
-                                    <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full animate-pulse">Playing</span>
-                                    <button
-                                      onClick={() => finalizeMatch(match.id)}
-                                      className="text-xs bg-orange-600 text-white px-3 py-1 rounded-full hover:bg-orange-700 transition-colors"
-                                    >
-                                      Selesai
-                                    </button>
-                                  </>
-                                )}
-                                {match.status === 'pending' && (
-                                  <>
-                                    {(match.score1 > 0 || match.score2 > 0) ? (
-                                      <button
-                                        onClick={() => startMatch(match.id)}
-                                        className="text-xs bg-blue-600 text-white px-3 py-1 rounded-full hover:bg-blue-700 transition-colors"
-                                      >
-                                        Playing
-                                      </button>
-                                    ) : (
-                                      <button
-                                        onClick={() => startMatch(match.id)}
-                                        className="text-xs bg-gray-600 text-white px-3 py-1 rounded-full hover:bg-gray-700 transition-colors"
-                                      >
-                                        Start
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                            <div className="grid md:grid-cols-3 gap-4 items-center">
-                              <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className={`${rumah1?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
-                                    {rumah1?.name}
-                                  </span>
-                                </div>
-                                <p className="text-sm font-medium">{match.pair1.player1} & {match.pair1.player2}</p>
-                              </div>
-                              <div className="flex items-center justify-center gap-4">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={match.score1}
-                                  onChange={(e) => updateMatchScore(match.id, e.target.value, match.score2)}
-                                  className="w-16 text-center px-2 py-2 border border-gray-300 rounded-lg text-lg font-bold focus:ring-2 focus:ring-blue-500"
-                                />
-                                <span className="text-2xl font-bold text-gray-400">:</span>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={match.score2}
-                                  onChange={(e) => updateMatchScore(match.id, match.score1, e.target.value)}
-                                  className="w-16 text-center px-2 py-2 border border-gray-300 rounded-lg text-lg font-bold focus:ring-2 focus:ring-blue-500"
-                                />
-                              </div>
-                              <div className="text-right">
-                                <div className="flex items-center justify-end gap-2 mb-1">
-                                  <span className={`${rumah2?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
-                                    {rumah2?.name}
-                                  </span>
-                                </div>
-                                <p className="text-sm font-medium">{match.pair2.player1} & {match.pair2.player2}</p>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
+                      {matches
+                        .filter(m => m.category === 'Mixed Doubles')
+                        .map(match => renderMatchCard(match))}
                     </div>
                   </div>
 
@@ -2009,92 +2311,9 @@ export default function KRKLTournamentSystem() {
                   <div>
                     <h3 className="text-xl font-bold mb-4 text-blue-600">Men's Doubles</h3>
                     <div className="space-y-3">
-                      {matches.filter(m => m.category === "Men's Doubles").map(match => {
-                        const rumah1 = rumahSukan.find(r => r.id === match.team1.rumahSukanId);
-                        const rumah2 = rumahSukan.find(r => r.id === match.team2.rumahSukanId);
-                        return (
-                          <div key={match.id} className={`p-4 rounded-lg border-2 ${match.status === 'completed' ? 'bg-green-50 border-green-200' : match.status === 'playing' ? 'bg-blue-50 border-blue-200' : (match.score1 > 0 || match.score2 > 0) ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
-                            <div className="flex items-center justify-between mb-3">
-                              <span className="text-sm font-semibold text-gray-600">Match #{match.matchNumber}</span>
-                              <div className="flex items-center gap-2">
-                                {(match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')) && (
-                                  <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded font-medium">
-                                    Meja {match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')}
-                                  </span>
-                                )}
-                                {match.status === 'completed' && (
-                                  <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">Selesai</span>
-                                )}
-                                {match.status === 'playing' && (
-                                  <>
-                                    <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full animate-pulse">Playing</span>
-                                    <button
-                                      onClick={() => finalizeMatch(match.id)}
-                                      className="text-xs bg-orange-600 text-white px-3 py-1 rounded-full hover:bg-orange-700 transition-colors"
-                                    >
-                                      Selesai
-                                    </button>
-                                  </>
-                                )}
-                                {match.status === 'pending' && (
-                                  <>
-                                    {(match.score1 > 0 || match.score2 > 0) ? (
-                                      <button
-                                        onClick={() => startMatch(match.id)}
-                                        className="text-xs bg-blue-600 text-white px-3 py-1 rounded-full hover:bg-blue-700 transition-colors"
-                                      >
-                                        Playing
-                                      </button>
-                                    ) : (
-                                      <button
-                                        onClick={() => startMatch(match.id)}
-                                        className="text-xs bg-gray-600 text-white px-3 py-1 rounded-full hover:bg-gray-700 transition-colors"
-                                      >
-                                        Start
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                            <div className="grid md:grid-cols-3 gap-4 items-center">
-                              <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className={`${rumah1?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
-                                    {rumah1?.name}
-                                  </span>
-                                </div>
-                                <p className="text-sm font-medium">{match.pair1.player1} & {match.pair1.player2}</p>
-                              </div>
-                              <div className="flex items-center justify-center gap-4">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={match.score1}
-                                  onChange={(e) => updateMatchScore(match.id, e.target.value, match.score2)}
-                                  className="w-16 text-center px-2 py-2 border border-gray-300 rounded-lg text-lg font-bold focus:ring-2 focus:ring-blue-500"
-                                />
-                                <span className="text-2xl font-bold text-gray-400">:</span>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={match.score2}
-                                  onChange={(e) => updateMatchScore(match.id, match.score1, e.target.value)}
-                                  className="w-16 text-center px-2 py-2 border border-gray-300 rounded-lg text-lg font-bold focus:ring-2 focus:ring-blue-500"
-                                />
-                              </div>
-                              <div className="text-right">
-                                <div className="flex items-center justify-end gap-2 mb-1">
-                                  <span className={`${rumah2?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
-                                    {rumah2?.name}
-                                  </span>
-                                </div>
-                                <p className="text-sm font-medium">{match.pair2.player1} & {match.pair2.player2}</p>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
+                      {matches
+                        .filter(m => m.category === "Men's Doubles")
+                        .map(match => renderMatchCard(match))}
                     </div>
                   </div>
                 </div>
@@ -2127,9 +2346,9 @@ export default function KRKLTournamentSystem() {
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs font-semibold text-green-700">Match #{match.matchNumber} - {match.category}</span>
                             <div className="flex items-center gap-2">
-                              {(match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')) && (
+                              {getTableDisplayName(match) && (
                                 <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-medium">
-                                  Meja {match.table_name || match.table || (match.category === 'Mixed Doubles' ? 'A' : match.category === "Men's Doubles" ? 'B' : '')}
+                                  {getTableDisplayName(match)}
                                 </span>
                               )}
                               <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">SELESAI</span>
@@ -2140,7 +2359,11 @@ export default function KRKLTournamentSystem() {
                               <span className={`${rumah1?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
                                 {rumah1?.name}
                               </span>
-                              <p className="text-sm mt-1">{match.pair1.player1} & {match.pair1.player2}</p>
+                              <p className="text-sm mt-1">
+                                {match.pair1?.player1 && match.pair1?.player2
+                                  ? `${match.pair1.player1} & ${match.pair1.player2}`
+                                  : 'Players'}
+                              </p>
                             </div>
                             <div className="flex items-center justify-center gap-3">
                               <span className={`text-3xl font-bold ${winner?.id === rumah1?.id ? 'text-green-600' : 'text-gray-500'}`}>
@@ -2155,7 +2378,11 @@ export default function KRKLTournamentSystem() {
                               <span className={`${rumah2?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
                                 {rumah2?.name}
                               </span>
-                              <p className="text-sm mt-1">{match.pair2.player1} & {match.pair2.player2}</p>
+                              <p className="text-sm mt-1">
+                                {match.pair2?.player1 && match.pair2?.player2
+                                  ? `${match.pair2.player1} & ${match.pair2.player2}`
+                                  : 'Players'}
+                              </p>
                             </div>
                           </div>
                           {winner && (
@@ -2182,11 +2409,19 @@ export default function KRKLTournamentSystem() {
                     {getUpcomingMatches().map(match => {
                       const rumah1 = rumahSukan.find(r => r.id === match.team1.rumahSukanId);
                       const rumah2 = rumahSukan.find(r => r.id === match.team2.rumahSukanId);
+                      const tableDisplay = getTableDisplayName(match);
                       return (
                         <div key={match.id} className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-lg border-2 border-blue-200">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs font-semibold text-blue-700">Match #{match.matchNumber} - {match.category}</span>
-                            <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">AKAN DATANG</span>
+                            <div className="flex items-center gap-2">
+                                {tableDisplay && (
+                                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">
+                                    {tableDisplay}
+                                  </span>
+                                )}
+                                <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">AKAN DATANG</span>
+                            </div>
                           </div>
                           <div className="grid md:grid-cols-3 gap-4 items-center">
                             <div>
@@ -2296,7 +2531,16 @@ export default function KRKLTournamentSystem() {
               ) : (
                 <div className="space-y-6">
                   <div className="space-y-3">
-                    {standings.map((standing, index) => (
+                    {standings.map((standing, index) => {
+                      const houseSummary = housePointsById.get(Number(standing.id)) || housePointsById.get(standing.id);
+                      const wins = standing.wins ?? 0;
+                      const losses = standing.losses ?? 0;
+                      const spiritPoints = houseSummary?.spiritPoints ?? 0;
+                      const totalPoints = houseSummary?.totalPoints ?? (standing.leaguePoints ?? standing.points ?? 0);
+                      const formattedSpirit = formatScore(spiritPoints);
+                      const formattedTotal = formatScore(totalPoints);
+
+                      return (
                       <div
                         key={standing.name}
                         className={`p-6 rounded-lg border-2 ${
@@ -2333,32 +2577,26 @@ export default function KRKLTournamentSystem() {
                           </div>
                           <div className="flex gap-8">
                             <div className="text-center">
-                              <p className="text-2xl font-bold text-blue-600">{standing.leaguePoints ?? standing.points ?? 0}</p>
-                              <p className="text-sm text-gray-600">Points</p>
+                              <p className="text-2xl font-bold text-purple-600">{formattedSpirit}</p>
+                              <p className="text-sm text-gray-600">Spirit</p>
                             </div>
                             <div className="text-center">
-                              <p className="text-2xl font-bold text-green-600">{standing.wins}</p>
+                              <p className="text-2xl font-bold text-green-600">{wins}</p>
                               <p className="text-sm text-gray-600">Menang</p>
                             </div>
                             <div className="text-center">
-                              <p className="text-2xl font-bold text-gray-600">{standing.draws}</p>
-                              <p className="text-sm text-gray-600">Seri</p>
-                            </div>
-                            <div className="text-center">
-                              <p className="text-2xl font-bold text-red-600">{standing.losses}</p>
+                              <p className="text-2xl font-bold text-red-600">{losses}</p>
                               <p className="text-sm text-gray-600">Kalah</p>
                             </div>
                             <div className="text-center">
-                              <p className="text-2xl font-bold text-purple-600">
-                                {(standing.gamesDifference ?? (standing.gamesWon - standing.gamesLost)) >= 0 ? '+' : ''}
-                                {standing.gamesDifference ?? (standing.gamesWon - standing.gamesLost)}
-                              </p>
-                              <p className="text-sm text-gray-600">Games Diff</p>
+                              <p className="text-2xl font-bold text-indigo-600">{formattedTotal}</p>
+                              <p className="text-sm text-gray-600">Total Points</p>
                             </div>
                           </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   <div className="bg-white rounded-lg shadow-md p-6">
@@ -2391,9 +2629,9 @@ export default function KRKLTournamentSystem() {
                               <td className="p-2 text-center">{house.placementPoints}</td>
                               <td className="p-2 text-center">{house.participationPoints}</td>
                               <td className="p-2 text-center">{house.matchWinPoints}</td>
-                              <td className="p-2 text-center">{house.spiritPoints.toFixed(2)}</td>
+                              <td className="p-2 text-center">{formatScore(house.spiritPoints)}</td>
                               <td className="p-2 text-center">{house.categoryWins}</td>
-                              <td className="p-2 text-center font-semibold text-indigo-600">{house.totalPoints}</td>
+                              <td className="p-2 text-center font-semibold text-indigo-600">{formatScore(house.totalPoints)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -2467,34 +2705,18 @@ export default function KRKLTournamentSystem() {
                           <div className="text-right">
                             <div className="text-sm text-gray-600">Total Score</div>
                             <div className="text-xl font-bold text-green-600">
-                              {existingMarks.totalScore.toFixed(2)} / 1.00
+                              {formatScore(existingMarks.totalScore)} / 1
                             </div>
                           </div>
                         )}
                       </div>
 
-                      <div className="space-y-2 mb-4">
-                        {existingMarks && (
-                          <>
-                            <div className="flex justify-between text-sm">
-                              <span>Sportsmanship:</span>
-                              <span className="font-medium">{existingMarks.sportsmanshipScore.toFixed(2)}</span>
-                            </div>
-                            <div className="flex justify-between text-sm">
-                              <span>Teamwork:</span>
-                              <span className="font-medium">{existingMarks.teamworkScore.toFixed(2)}</span>
-                            </div>
-                            <div className="flex justify-between text-sm">
-                              <span>Seat Arrangement:</span>
-                              <span className="font-medium">{existingMarks.seatArrangementScore.toFixed(2)}</span>
-                            </div>
-                            <div className="flex justify-between text-sm">
-                              <span>Assessor:</span>
-                              <span className="font-medium">{existingMarks.assessorName}</span>
-                            </div>
-                          </>
-                        )}
-                      </div>
+                      {existingMarks && (
+                        <div className="mb-4 text-sm text-gray-600">
+                          <span className="font-medium text-gray-700">Assessor:</span>{' '}
+                          {existingMarks.assessorName || '—'}
+                        </div>
+                      )}
 
                       <button
                         onClick={() => openSpiritMarksModal(rumah)}
@@ -2561,10 +2783,10 @@ export default function KRKLTournamentSystem() {
                           <td className="px-4 py-3 text-center">{house.participationPoints}</td>
                           <td className="px-4 py-3 text-center">{house.matchWinPoints}</td>
                           <td className="px-4 py-3 text-center text-green-600 font-medium">
-                            {house.spiritPoints.toFixed(2)}
+                            {formatScore(house.spiritPoints)}
                           </td>
                           <td className="px-4 py-3 text-center font-bold text-lg">
-                            {house.totalPoints.toFixed(2)}
+                            {formatScore(house.totalPoints)}
                           </td>
                         </tr>
                       ))}
@@ -2592,7 +2814,7 @@ export default function KRKLTournamentSystem() {
                   </div>
                   <div>
                     <p><strong>Match Wins:</strong> 1 point per victory</p>
-                    <p><strong>Spirit Marks:</strong> Up to 1.00 point (assessed by committee)</p>
+                    <p><strong>Spirit Marks:</strong> Up to 1 point (assessed by committee)</p>
                   </div>
                 </div>
               </div>
@@ -2722,68 +2944,36 @@ export default function KRKLTournamentSystem() {
 
               {/* Assessment Scores */}
               <div>
-                <h4 className="font-semibold text-gray-800 mb-4">Assessment Scores (Max 1.00 point total)</h4>
-                <div className="grid md:grid-cols-3 gap-6">
+                <h4 className="font-semibold text-gray-800 mb-4">Spirit Score (Max 1 point)</h4>
+                <div className="grid md:grid-cols-2 gap-6">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Sportsmanship (0.40 pts):
+                      Overall Spirit & Sportsmanship Score:
                     </label>
                     <input
                       type="number"
                       min="0"
-                      max="0.40"
+                      max="1"
                       step="0.01"
-                      value={spiritAssessment.sportsmanshipScore}
-                      onChange={(e) => setSpiritAssessment({...spiritAssessment, sportsmanshipScore: parseFloat(e.target.value) || 0})}
+                      value={spiritAssessment.overallScore}
+                      onChange={(e) => {
+                        const parsed = parseFloat(e.target.value);
+                        const clamped = Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0;
+                        setSpiritAssessment({
+                          ...spiritAssessment,
+                          overallScore: clamped
+                        });
+                      }}
                       className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                     />
                     <div className="text-xs text-gray-500 mt-1">
-                      Respect officials, fair play, discipline
+                      Beri markah 0 hingga 1 (contoh: 1 = penuh).
                     </div>
                   </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Teamwork (0.30 pts):
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="0.30"
-                      step="0.01"
-                      value={spiritAssessment.teamworkScore}
-                      onChange={(e) => setSpiritAssessment({...spiritAssessment, teamworkScore: parseFloat(e.target.value) || 0})}
-                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                    />
-                    <div className="text-xs text-gray-500 mt-1">
-                      Team cooperation, unity, support
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Seat Arrangement (0.30 pts):
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="0.30"
-                      step="0.01"
-                      value={spiritAssessment.seatArrangementScore}
-                      onChange={(e) => setSpiritAssessment({...spiritAssessment, seatArrangementScore: parseFloat(e.target.value) || 0})}
-                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                    />
-                    <div className="text-xs text-gray-500 mt-1">
-                      Organization, cleanliness, layout
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 p-3 bg-blue-50 rounded-md">
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium text-blue-800">Total Score:</span>
-                    <span className="text-lg font-bold text-blue-800">
-                      {(spiritAssessment.sportsmanshipScore + spiritAssessment.teamworkScore + spiritAssessment.seatArrangementScore).toFixed(2)} / 1.00
+                  <div className="p-4 bg-blue-50 rounded-md flex flex-col justify-center">
+                    <span className="font-medium text-blue-800">Total Score</span>
+                    <span className="text-2xl font-bold text-blue-800">
+                      {formatScore(spiritAssessment.overallScore || 0)} / 1
                     </span>
                   </div>
                 </div>
@@ -2792,58 +2982,17 @@ export default function KRKLTournamentSystem() {
               {/* Assessment Notes */}
               <div>
                 <h4 className="font-semibold text-gray-800 mb-4">Assessment Notes</h4>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Sportsmanship Notes:
-                    </label>
-                    <textarea
-                      value={spiritAssessment.sportsmanshipNotes}
-                      onChange={(e) => setSpiritAssessment({...spiritAssessment, sportsmanshipNotes: e.target.value})}
-                      rows="2"
-                      placeholder="Comments on sportsmanship behavior, respect for officials, etc."
-                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Teamwork Notes:
-                    </label>
-                    <textarea
-                      value={spiritAssessment.teamworkNotes}
-                      onChange={(e) => setSpiritAssessment({...spiritAssessment, teamworkNotes: e.target.value})}
-                      rows="2"
-                      placeholder="Comments on team cooperation, unity, support for members"
-                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Seat Arrangement Notes:
-                    </label>
-                    <textarea
-                      value={spiritAssessment.seatArrangementNotes}
-                      onChange={(e) => setSpiritAssessment({...spiritAssessment, seatArrangementNotes: e.target.value})}
-                      rows="2"
-                      placeholder="Comments on seating organization, cleanliness, layout"
-                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Overall Assessment Notes:
-                    </label>
-                    <textarea
-                      value={spiritAssessment.overallNotes}
-                      onChange={(e) => setSpiritAssessment({...spiritAssessment, overallNotes: e.target.value})}
-                      rows="3"
-                      placeholder="Overall comments, observations, recommendations"
-                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Overall Notes:
+                  </label>
+                  <textarea
+                    value={spiritAssessment.overallNotes}
+                    onChange={(e) => setSpiritAssessment({...spiritAssessment, overallNotes: e.target.value})}
+                    rows="3"
+                    placeholder="Catatan ringkas tentang semangat rumah."
+                    className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  />
                 </div>
               </div>
 

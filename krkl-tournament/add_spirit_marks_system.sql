@@ -36,28 +36,3 @@ CREATE TABLE IF NOT EXISTS house_points (
     UNIQUE KEY unique_rumah_points_date (rumah_id, tournament_date)
 );
 
--- Create spirit marks assessment criteria reference table
-CREATE TABLE IF NOT EXISTS spirit_criteria (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    category ENUM('sportsmanship', 'teamwork', 'seat_arrangement') NOT NULL,
-    criteria_description TEXT NOT NULL,
-    max_score DECIMAL(4,2) NOT NULL,
-    weight_percentage DECIMAL(5,2) NOT NULL COMMENT 'Percentage weight in total spirit score',
-    is_active BOOLEAN DEFAULT TRUE,
-    sort_order INT DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Insert default assessment criteria
-INSERT INTO spirit_criteria (category, criteria_description, max_score, weight_percentage, sort_order) VALUES
-('sportsmanship', 'Respects officials, referees, and fellow players', 0.10, 10.00, 1),
-('sportsmanship', 'Demonstrates fair play and discipline', 0.10, 10.00, 2),
-('sportsmanship', 'Accepts decisions gracefully', 0.10, 10.00, 3),
-('sportsmanship', 'No unsportsmanlike conduct', 0.10, 10.00, 4),
-
-('teamwork', 'Supports and encourages team members', 0.10, 10.00, 1),
-('teamwork', 'Shows cooperation and coordination', 0.10, 10.00, 2),
-('teamwork', 'Demonstrates team unity and spirit', 0.10, 10.00, 3),
-
-('seat_arrangement', 'Organized seating area for rumah members', 0.15, 15.00, 1),
-('seat_arrangement', 'Clean and tidy rumah space', 0.15, 15.00, 2);

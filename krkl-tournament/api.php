@@ -183,6 +183,56 @@ function handleGet($conn) {
             ");
             $matches = [];
             while ($row = $result->fetch_assoc()) {
+                // Build individual games array for easier frontend consumption
+                $games = [];
+                $team1Wins = 0;
+                $team2Wins = 0;
+
+                for ($i = 1; $i <= 5; $i++) {
+                    $team1Score = (int)($row["game{$i}_team1"] ?? 0);
+                    $team2Score = (int)($row["game{$i}_team2"] ?? 0);
+                    $maxScore = max($team1Score, $team2Score);
+                    $scoreDiff = abs($team1Score - $team2Score);
+                    $gameCompleted = $maxScore >= 11 && $scoreDiff >= 2;
+
+                    if ($gameCompleted) {
+                        if ($team1Score > $team2Score) {
+                            $team1Wins++;
+                        } elseif ($team2Score > $team1Score) {
+                            $team2Wins++;
+                        }
+                    }
+
+                    $games[] = [
+                        'gameNumber' => $i,
+                        'team1Score' => $team1Score,
+                        'team2Score' => $team2Score,
+                        'completed' => $gameCompleted
+                    ];
+                }
+
+                $row['games'] = $games;
+                $row['team1Wins'] = $team1Wins;
+                $row['team2Wins'] = $team2Wins;
+                $row['score1'] = isset($row['score1']) ? (int)$row['score1'] : $team1Wins;
+                $row['score2'] = isset($row['score2']) ? (int)$row['score2'] : $team2Wins;
+
+                $currentGame = (int)($row['current_game'] ?? 1);
+                if ($currentGame < 1 || $currentGame > 5) {
+                    $currentGame = 1;
+                }
+                // Ensure current game points to the first incomplete game if match isn't completed
+                $matchComplete = $team1Wins >= 3 || $team2Wins >= 3;
+                if (!$matchComplete) {
+                    for ($i = 0; $i < 5; $i++) {
+                        if (!$games[$i]['completed']) {
+                            $currentGame = $i + 1;
+                            break;
+                        }
+                    }
+                }
+                $row['currentGame'] = $currentGame;
+
                 $matches[] = $row;
             }
             echo json_encode($matches);
@@ -283,26 +333,7 @@ function handleGet($conn) {
             echo json_encode($spiritMarks);
             break;
 
-        case 'spirit_criteria':
-            $result = $conn->query("
-                SELECT * FROM spirit_criteria
-                WHERE is_active = TRUE
-                ORDER BY category, sort_order
-            ");
-            $criteria = [];
-            while ($row = $result->fetch_assoc()) {
-                $criteria[] = [
-                    'id' => (int)$row['id'],
-                    'category' => $row['category'],
-                    'criteriaDescription' => $row['criteria_description'],
-                    'maxScore' => (float)$row['max_score'],
-                    'weightPercentage' => (float)$row['weight_percentage'],
-                    'sortOrder' => (int)$row['sort_order']
-                ];
-            }
-            echo json_encode($criteria);
-            break;
-
+  
         case 'house_points':
             $tournamentDate = $_GET['tournament_date'] ?? date('Y-m-d');
             $safeTournamentDate = $conn->real_escape_string($tournamentDate);
@@ -554,47 +585,64 @@ function handlePost($conn, $input) {
             $matchNumber = 1;
             for ($i = 0; $i < count($teams); $i++) {
                 for ($j = $i + 1; $j < count($teams); $j++) {
+                    $teamIId = (int)$teams[$i]['id'];
+                    $teamJId = (int)$teams[$j]['id'];
+
+                    $teamIMixedTableId = !empty($teams[$i]['mixed_doubles_table_id']) ? (int)$teams[$i]['mixed_doubles_table_id'] : null;
+                    $teamJMixedTableId = !empty($teams[$j]['mixed_doubles_table_id']) ? (int)$teams[$j]['mixed_doubles_table_id'] : null;
+                    $mixedTableId = $teamIMixedTableId ?? $teamJMixedTableId;
+                    if ($teamIMixedTableId !== null && $teamJMixedTableId !== null && $teamJMixedTableId === $teamIMixedTableId) {
+                        $mixedTableId = $teamIMixedTableId;
+                    }
+
+                    $teamIMensTableId = !empty($teams[$i]['mens_doubles_table_id']) ? (int)$teams[$i]['mens_doubles_table_id'] : null;
+                    $teamJMensTableId = !empty($teams[$j]['mens_doubles_table_id']) ? (int)$teams[$j]['mens_doubles_table_id'] : null;
+                    $mensTableId = $teamIMensTableId ?? $teamJMensTableId;
+                    if ($teamIMensTableId !== null && $teamJMensTableId !== null && $teamJMensTableId === $teamIMensTableId) {
+                        $mensTableId = $teamIMensTableId;
+                    }
+
                     // Mixed Doubles
                     $stmt = $conn->prepare("
-                        INSERT INTO matches (match_number, category, team1_id, team2_id, pair1_player1, pair1_player2, pair2_player1, pair2_player2) 
-                        VALUES (?, 'Mixed Doubles', ?, ?, ?, ?, ?, ?)
+                        INSERT INTO matches (match_number, category, team1_id, team2_id, pair1_player1, pair1_player2, pair2_player1, pair2_player2, table_id) 
+                        VALUES (?, 'Mixed Doubles', ?, ?, ?, ?, ?, ?, ?)
                     ");
                     $teamIMixedPlayer1 = $teams[$i]['mixed_pair_player1'] ?? '';
                     $teamIMixedPlayer2 = $teams[$i]['mixed_pair_player2'] ?? '';
                     $teamJMixedPlayer1 = $teams[$j]['mixed_pair_player1'] ?? '';
                     $teamJMixedPlayer2 = $teams[$j]['mixed_pair_player2'] ?? '';
                     $mixedMatchNumber = $matchNumber++;
-                    $teamIId = $teams[$i]['id'];
-                    $teamJId = $teams[$j]['id'];
-                    $stmt->bind_param("iisssss",
+                    $stmt->bind_param("iiissssi",
                         $mixedMatchNumber,
                         $teamIId,
                         $teamJId,
                         $teamIMixedPlayer1,
                         $teamIMixedPlayer2,
                         $teamJMixedPlayer1,
-                        $teamJMixedPlayer2
+                        $teamJMixedPlayer2,
+                        $mixedTableId
                     );
                     $stmt->execute();
                     
                     // Men's Doubles
                     $stmt = $conn->prepare("
-                        INSERT INTO matches (match_number, category, team1_id, team2_id, pair1_player1, pair1_player2, pair2_player1, pair2_player2) 
-                        VALUES (?, 'Men\'s Doubles', ?, ?, ?, ?, ?, ?)
+                        INSERT INTO matches (match_number, category, team1_id, team2_id, pair1_player1, pair1_player2, pair2_player1, pair2_player2, table_id) 
+                        VALUES (?, 'Men\'s Doubles', ?, ?, ?, ?, ?, ?, ?)
                     ");
                     $teamIMensPlayer1 = $teams[$i]['mens_pair_player1'] ?? '';
                     $teamIMensPlayer2 = $teams[$i]['mens_pair_player2'] ?? '';
                     $teamJMensPlayer1 = $teams[$j]['mens_pair_player1'] ?? '';
                     $teamJMensPlayer2 = $teams[$j]['mens_pair_player2'] ?? '';
                     $mensMatchNumber = $matchNumber++;
-                    $stmt->bind_param("iisssss",
+                    $stmt->bind_param("iiissssi",
                         $mensMatchNumber,
                         $teamIId,
                         $teamJId,
                         $teamIMensPlayer1,
                         $teamIMensPlayer2,
                         $teamJMensPlayer1,
-                        $teamJMensPlayer2
+                        $teamJMensPlayer2,
+                        $mensTableId
                     );
                     $stmt->execute();
                 }
@@ -843,47 +891,158 @@ function handlePut($conn, $input) {
 
     switch ($action) {
         case 'update_match_score':
-            $score1 = (int)($input['score1'] ?? 0);
-            $score2 = (int)($input['score2'] ?? 0);
             $matchId = (int)($input['matchId'] ?? 0);
+            $gameNumber = (int)($input['gameNumber'] ?? 1);
+            $team1Score = (int)($input['team1Score'] ?? 0);
+            $team2Score = (int)($input['team2Score'] ?? 0);
 
             if ($matchId <= 0) {
                 echo json_encode(['success' => false, 'message' => 'Invalid match ID: ' . $matchId]);
                 break;
             }
 
-            // Log the update attempt for debugging
-            error_log("API: Updating match $matchId with scores [$score1-$score2]");
-
-            // Get current status to preserve it
-            $statusCheck = $conn->prepare("SELECT status FROM matches WHERE id = ?");
-            $statusCheck->bind_param("i", $matchId);
-            $statusCheck->execute();
-            $currentStatus = $statusCheck->get_result()->fetch_assoc()['status'] ?? 'pending';
-            $statusCheck->close();
-
-            $stmt = $conn->prepare("
-                UPDATE matches
-                SET score1 = ?, score2 = ?, status = ?, timestamp = NOW()
-                WHERE id = ?
-            ");
-            if (!$stmt) {
-                $error = $conn->error;
-                error_log("API: Prepare statement failed - " . $error);
-                echo json_encode(['success' => false, 'message' => 'Database error: ' . $error]);
+            if ($gameNumber < 1 || $gameNumber > 5) {
+                echo json_encode(['success' => false, 'message' => 'Invalid game number: ' . $gameNumber]);
                 break;
             }
 
-            $stmt->bind_param("iisi", $score1, $score2, $currentStatus, $matchId);
-            if ($stmt->execute()) {
-                error_log("API: Successfully updated match $matchId (status preserved: $currentStatus)");
-                echo json_encode(['success' => true, 'message' => 'Match score updated successfully']);
-            } else {
-                $error = $stmt->error;
-                error_log("API: Execute failed - " . $error);
-                echo json_encode(['success' => false, 'message' => 'Failed to update match: ' . $error]);
+            // Validate scores (table tennis games typically go to 11 points)
+            if ($team1Score < 0 || $team2Score < 0 || $team1Score > 30 || $team2Score > 30) {
+                echo json_encode(['success' => false, 'message' => 'Invalid scores - must be between 0 and 30']);
+                break;
             }
-            $stmt->close();
+
+            // Get current match data
+            $matchCheck = $conn->prepare("SELECT status FROM matches WHERE id = ?");
+            $matchCheck->bind_param("i", $matchId);
+            $matchCheck->execute();
+            $matchData = $matchCheck->get_result()->fetch_assoc();
+            $matchCheck->close();
+
+            if (!$matchData) {
+                echo json_encode(['success' => false, 'message' => 'Match not found']);
+                break;
+            }
+
+            // Prevent editing completed games
+            if ($matchData['status'] === 'completed') {
+                echo json_encode(['success' => false, 'message' => 'Cannot edit scores of a completed match']);
+                break;
+            }
+
+            $minWinScore = 11;
+            $requiredLead = 2;
+            $scoreDiff = abs($team1Score - $team2Score);
+            $maxScoreThisGame = max($team1Score, $team2Score);
+            $gameComplete = $maxScoreThisGame >= $minWinScore && $scoreDiff >= $requiredLead;
+            $needsExtraPoints = $maxScoreThisGame >= $minWinScore && $scoreDiff < $requiredLead;
+
+            // Update the specific game scores
+            $updateGame = $conn->prepare("
+                UPDATE matches
+                SET game{$gameNumber}_team1 = ?, game{$gameNumber}_team2 = ?, timestamp = NOW()
+                WHERE id = ?
+            ");
+            if ($updateGame === false) {
+                echo json_encode(['success' => false, 'message' => 'Failed to prepare statement: ' . $conn->error]);
+                break;
+            }
+
+            $updateGame->bind_param("iii", $team1Score, $team2Score, $matchId);
+            if (!$updateGame->execute()) {
+                echo json_encode(['success' => false, 'message' => 'Failed to update game scores: ' . $updateGame->error]);
+                $updateGame->close();
+                break;
+            }
+            $updateGame->close();
+
+            // Recalculate aggregate scores after update
+            $snapshotStmt = $conn->prepare("
+                SELECT
+                    status,
+                    current_game,
+                    game1_team1, game1_team2,
+                    game2_team1, game2_team2,
+                    game3_team1, game3_team2,
+                    game4_team1, game4_team2,
+                    game5_team1, game5_team2,
+                    completed_at
+                FROM matches
+                WHERE id = ?
+            ");
+            $snapshotStmt->bind_param("i", $matchId);
+            $snapshotStmt->execute();
+            $snapshot = $snapshotStmt->get_result()->fetch_assoc();
+            $snapshotStmt->close();
+
+            if (!$snapshot) {
+                echo json_encode(['success' => false, 'message' => 'Failed to load match snapshot after update']);
+                break;
+            }
+
+            $team1Wins = 0;
+            $team2Wins = 0;
+            $firstIncompleteGame = null;
+
+            for ($i = 1; $i <= 5; $i++) {
+                $g1 = (int)($snapshot["game{$i}_team1"] ?? 0);
+                $g2 = (int)($snapshot["game{$i}_team2"] ?? 0);
+                $maxScore = max($g1, $g2);
+                $diff = abs($g1 - $g2);
+                $completed = $maxScore >= $minWinScore && $diff >= $requiredLead;
+
+                if ($completed) {
+                    if ($g1 > $g2) {
+                        $team1Wins++;
+                    } elseif ($g2 > $g1) {
+                        $team2Wins++;
+                    }
+                } elseif ($firstIncompleteGame === null) {
+                    $firstIncompleteGame = $i;
+                }
+            }
+
+            if ($firstIncompleteGame === null) {
+                $firstIncompleteGame = min($team1Wins + $team2Wins + 1, 5);
+            }
+
+            $updateScores = $conn->prepare("
+                UPDATE matches
+                SET score1 = ?, score2 = ?, current_game = ?
+                WHERE id = ?
+            ");
+            $updateScores->bind_param("iiii", $team1Wins, $team2Wins, $firstIncompleteGame, $matchId);
+            $updateScores->execute();
+            $updateScores->close();
+
+            $isMatchComplete = ($team1Wins >= 3 || $team2Wins >= 3);
+            if ($isMatchComplete && $snapshot['status'] !== 'completed') {
+                $completeMatch = $conn->prepare("
+                    UPDATE matches
+                    SET status = 'completed', completed_at = COALESCE(completed_at, NOW())
+                    WHERE id = ?
+                ");
+                $completeMatch->bind_param("i", $matchId);
+                $completeMatch->execute();
+                $completeMatch->close();
+            }
+
+            $message = "Game $gameNumber scores updated successfully";
+            if ($gameComplete) {
+                $message = "Game $gameNumber selesai dengan skor {$team1Score}-{$team2Score}";
+            } elseif ($needsExtraPoints) {
+                $message = "Skor dikemaskini. Game belum selesai - perlukan beza 2 mata selepas 10-10.";
+            }
+
+            echo json_encode([
+                'success' => true,
+                'message' => $message,
+                'gameComplete' => $gameComplete,
+                'matchComplete' => $isMatchComplete,
+                'team1Wins' => $team1Wins,
+                'team2Wins' => $team2Wins,
+                'currentGame' => $firstIncompleteGame
+            ]);
             break;
         case 'start_match':
             $matchId = (int)($input['matchId'] ?? 0);
