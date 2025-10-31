@@ -138,6 +138,7 @@ export default function KRKLTournamentSystem() {
               points2: match.points2 !== undefined && match.points2 !== null ? Number(match.points2) : undefined,
               status: match.status ?? 'pending',
               timestamp: match.timestamp ?? null,
+              completed_at: match.completed_at,
               createdAt: match.created_at ?? match.createdAt ?? null,
             };
           })
@@ -603,6 +604,31 @@ export default function KRKLTournamentSystem() {
 
   const updateMatchScore = async (matchId, score1, score2) => {
     try {
+      // Find the current match to log score changes
+      const currentMatch = matches.find(m => m.id === matchId);
+      if (currentMatch) {
+        const oldScore1 = currentMatch.score1;
+        const oldScore2 = currentMatch.score2;
+        const newScore1 = parseInt(score1) || 0;
+        const newScore2 = parseInt(score2) || 0;
+
+        // Log score changes
+        if (newScore1 > oldScore1) {
+          console.log(`🔼 Score UP - Match ${matchId}: Team 1 score increased from ${oldScore1} to ${newScore1}`);
+        } else if (newScore1 < oldScore1) {
+          console.log(`🔽 Score DOWN - Match ${matchId}: Team 1 score decreased from ${oldScore1} to ${newScore1}`);
+        }
+
+        if (newScore2 > oldScore2) {
+          console.log(`🔼 Score UP - Match ${matchId}: Team 2 score increased from ${oldScore2} to ${newScore2}`);
+        } else if (newScore2 < oldScore2) {
+          console.log(`🔽 Score DOWN - Match ${matchId}: Team 2 score decreased from ${oldScore2} to ${newScore2}`);
+        }
+
+        // Log the complete score update
+        console.log(`📊 Score Update - Match ${matchId}: [${oldScore1}-${oldScore2}] → [${newScore1}-${newScore2}]`);
+      }
+
       const response = await fetch(API_URL, {
         method: 'PUT',
         headers: {
@@ -616,8 +642,23 @@ export default function KRKLTournamentSystem() {
         })
       });
 
-      const result = await response.json();
-      
+      // Check if response is ok before parsing JSON
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const responseText = await response.text();
+      console.log('Raw API response:', responseText);
+
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('JSON Parse Error:', parseError);
+        console.error('Response text:', responseText);
+        throw new Error('Invalid JSON response from server');
+      }
+
       if (result.success) {
         await fetchMatches(); // Refresh matches from database
         alert('Match score updated successfully!');
@@ -627,6 +668,97 @@ export default function KRKLTournamentSystem() {
     } catch (error) {
       console.error('Error updating match score:', error);
       alert('Error updating match score. Please try again.');
+    }
+  };
+
+  const startMatch = async (matchId) => {
+    if (!window.confirm('Start this match? This will mark it as "playing" and show it in the public display as ongoing.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(API_URL, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'start_match',
+          matchId: matchId
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const responseText = await response.text();
+      console.log('Raw start match API response:', responseText);
+
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('JSON Parse Error in start match:', parseError);
+        console.error('Response text:', responseText);
+        throw new Error('Invalid JSON response from server');
+      }
+
+      if (result.success) {
+        await fetchMatches();
+        alert('Match started successfully!');
+      } else {
+        alert('Error starting match: ' + (result.message || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error starting match:', error);
+      alert('Error starting match. Please try again.');
+    }
+  };
+
+  const finalizeMatch = async (matchId) => {
+    if (!window.confirm('Are you sure you want to mark this match as completed? This will show the winner in the Live Results.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(API_URL, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'finalize_match',
+          matchId: matchId
+        })
+      });
+
+      // Check if response is ok before parsing JSON
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const responseText = await response.text();
+      console.log('Raw finalize API response:', responseText);
+
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('JSON Parse Error in finalize:', parseError);
+        console.error('Response text:', responseText);
+        throw new Error('Invalid JSON response from server');
+      }
+
+      if (result.success) {
+        await fetchMatches(); // Refresh matches from database
+        alert('Match marked as completed successfully!');
+      } else {
+        alert('Error finalizing match: ' + (result.message || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error finalizing match:', error);
+      alert('Error finalizing match. Please try again.');
     }
   };
 
@@ -1788,12 +1920,44 @@ export default function KRKLTournamentSystem() {
                         const rumah1 = rumahSukan.find(r => r.id === match.team1.rumahSukanId);
                         const rumah2 = rumahSukan.find(r => r.id === match.team2.rumahSukanId);
                         return (
-                          <div key={match.id} className={`p-4 rounded-lg border-2 ${match.status === 'completed' ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+                          <div key={match.id} className={`p-4 rounded-lg border-2 ${match.status === 'completed' ? 'bg-green-50 border-green-200' : match.status === 'playing' ? 'bg-blue-50 border-blue-200' : (match.score1 > 0 || match.score2 > 0) ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
                             <div className="flex items-center justify-between mb-3">
                               <span className="text-sm font-semibold text-gray-600">Match #{match.matchNumber}</span>
-                              {match.status === 'completed' && (
-                                <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">Selesai</span>
-                              )}
+                              <div className="flex items-center gap-2">
+                                {match.status === 'completed' && (
+                                  <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">Selesai</span>
+                                )}
+                                {match.status === 'playing' && (
+                                  <>
+                                    <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full animate-pulse">Playing</span>
+                                    <button
+                                      onClick={() => finalizeMatch(match.id)}
+                                      className="text-xs bg-orange-600 text-white px-3 py-1 rounded-full hover:bg-orange-700 transition-colors"
+                                    >
+                                      Selesai
+                                    </button>
+                                  </>
+                                )}
+                                {match.status === 'pending' && (
+                                  <>
+                                    {(match.score1 > 0 || match.score2 > 0) ? (
+                                      <button
+                                        onClick={() => startMatch(match.id)}
+                                        className="text-xs bg-blue-600 text-white px-3 py-1 rounded-full hover:bg-blue-700 transition-colors"
+                                      >
+                                        Playing
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={() => startMatch(match.id)}
+                                        className="text-xs bg-gray-600 text-white px-3 py-1 rounded-full hover:bg-gray-700 transition-colors"
+                                      >
+                                        Start
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
                             </div>
                             <div className="grid md:grid-cols-3 gap-4 items-center">
                               <div>
@@ -1844,12 +2008,44 @@ export default function KRKLTournamentSystem() {
                         const rumah1 = rumahSukan.find(r => r.id === match.team1.rumahSukanId);
                         const rumah2 = rumahSukan.find(r => r.id === match.team2.rumahSukanId);
                         return (
-                          <div key={match.id} className={`p-4 rounded-lg border-2 ${match.status === 'completed' ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+                          <div key={match.id} className={`p-4 rounded-lg border-2 ${match.status === 'completed' ? 'bg-green-50 border-green-200' : match.status === 'playing' ? 'bg-blue-50 border-blue-200' : (match.score1 > 0 || match.score2 > 0) ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
                             <div className="flex items-center justify-between mb-3">
                               <span className="text-sm font-semibold text-gray-600">Match #{match.matchNumber}</span>
-                              {match.status === 'completed' && (
-                                <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">Selesai</span>
-                              )}
+                              <div className="flex items-center gap-2">
+                                {match.status === 'completed' && (
+                                  <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">Selesai</span>
+                                )}
+                                {match.status === 'playing' && (
+                                  <>
+                                    <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full animate-pulse">Playing</span>
+                                    <button
+                                      onClick={() => finalizeMatch(match.id)}
+                                      className="text-xs bg-orange-600 text-white px-3 py-1 rounded-full hover:bg-orange-700 transition-colors"
+                                    >
+                                      Selesai
+                                    </button>
+                                  </>
+                                )}
+                                {match.status === 'pending' && (
+                                  <>
+                                    {(match.score1 > 0 || match.score2 > 0) ? (
+                                      <button
+                                        onClick={() => startMatch(match.id)}
+                                        className="text-xs bg-blue-600 text-white px-3 py-1 rounded-full hover:bg-blue-700 transition-colors"
+                                      >
+                                        Playing
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={() => startMatch(match.id)}
+                                        className="text-xs bg-gray-600 text-white px-3 py-1 rounded-full hover:bg-gray-700 transition-colors"
+                                      >
+                                        Start
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
                             </div>
                             <div className="grid md:grid-cols-3 gap-4 items-center">
                               <div>
@@ -1915,7 +2111,7 @@ export default function KRKLTournamentSystem() {
                     {liveResults.map(match => {
                       const rumah1 = rumahSukan.find(r => r.id === match.team1.rumahSukanId);
                       const rumah2 = rumahSukan.find(r => r.id === match.team2.rumahSukanId);
-                      const winner = match.score1 > match.score2 ? rumah1 : match.score2 > match.score1 ? rumah2 : null;
+                      const winner = (match.status === 'completed' && match.score1 > match.score2) ? rumah1 : (match.status === 'completed' && match.score2 > match.score1) ? rumah2 : null;
                       return (
                         <div key={match.id} className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 rounded-lg border-2 border-green-200">
                           <div className="flex items-center justify-between mb-2">

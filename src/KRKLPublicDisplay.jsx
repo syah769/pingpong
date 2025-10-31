@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Eye, Trophy, GitBranch, RefreshCw, Settings, ArrowLeft } from 'lucide-react';
+import { Eye, Trophy, GitBranch, RefreshCw, Settings, ArrowLeft, Network } from 'lucide-react';
 
 const KRKLPublicDisplay = () => {
   const [matches, setMatches] = useState([]);
@@ -24,7 +24,7 @@ const KRKLPublicDisplay = () => {
     const interval = setInterval(() => {
       fetchAllData();
       setLastUpdate(new Date());
-    }, 30000); // Refresh every 30 seconds
+    }, 1000); // Refresh every 1 second
 
     return () => clearInterval(interval);
   }, [autoRefresh]);
@@ -35,6 +35,10 @@ const KRKLPublicDisplay = () => {
   }, []);
 
   const fetchAllData = async () => {
+    // Prevent multiple concurrent requests
+    if (window.isFetching) return;
+    window.isFetching = true;
+
     try {
       // Use same API endpoints as main system
       const [matchesRes, teamsRes, rumahRes, spiritRes, houseRes] = await Promise.all([
@@ -106,6 +110,7 @@ const KRKLPublicDisplay = () => {
             table: match.table ?? '',
             match_time: match.match_time,
             timestamp: match.timestamp ?? match.created_at,
+            completed_at: match.completed_at,
             created_at: match.created_at,
             updated_at: match.updated_at,
           };
@@ -150,17 +155,26 @@ const KRKLPublicDisplay = () => {
       // Set error states
       setIsOnline(false);
       setConnectionError(true);
+    } finally {
+      // Reset fetching flag
+      window.isFetching = false;
     }
   };
 
   // Process matches for live display
-  const { liveResults, upcomingMatches } = useMemo(() => {
+  const { liveResults, upcomingMatches, ongoingMatches } = useMemo(() => {
     const completed = matches.filter(m => m.status === 'completed')
-      .sort((a, b) => new Date(b.timestamp || b.created_at) - new Date(a.timestamp || b.created_at))
+      .sort((a, b) => new Date(b.completed_at || b.timestamp || b.created_at) - new Date(a.completed_at || a.timestamp || b.created_at))
       .slice(0, 5);
 
+    // Ongoing matches: status is 'playing'
+    const ongoing = matches.filter(m => m.status === 'playing')
+      .sort((a, b) => new Date(b.timestamp || b.created_at) - new Date(a.timestamp || a.created_at))
+      .slice(0, 3);
+
+    // Upcoming matches: pending with no scores OR pending with scores but not playing
     const upcoming = matches.filter(m => m.status === 'pending')
-      .sort((a, b) => new Date(a.match_time) - new Date(b.match_time))
+      .sort((a, b) => new Date(a.match_time || a.created_at) - new Date(b.match_time || b.created_at))
       .slice(0, 5);
 
     return {
@@ -170,6 +184,20 @@ const KRKLPublicDisplay = () => {
         const rumah2 = rumahSukan.find(r => r.id === match.team2?.rumahSukanId);
 
         // Attach rumah data to teams
+        const enrichedTeam1 = { ...match.team1, rumahData: rumah1 };
+        const enrichedTeam2 = { ...match.team2, rumahData: rumah2 };
+
+        return {
+          ...match,
+          team1: enrichedTeam1,
+          team2: enrichedTeam2
+        };
+      }),
+      ongoingMatches: ongoing.map(match => {
+        // Same logic for ongoing matches
+        const rumah1 = rumahSukan.find(r => r.id === match.team1?.rumahSukanId);
+        const rumah2 = rumahSukan.find(r => r.id === match.team2?.rumahSukanId);
+
         const enrichedTeam1 = { ...match.team1, rumahData: rumah1 };
         const enrichedTeam2 = { ...match.team2, rumahData: rumah2 };
 
@@ -295,8 +323,8 @@ const KRKLPublicDisplay = () => {
     const overallStatsMap = buildStatsFromMatches(
       matches.map(m => ({
         ...m,
-        team1: teams.find(t => t.id === m.team1_id),
-        team2: teams.find(t => t.id === m.team2_id)
+        team1: { rumahSukanId: m.team1?.rumahSukanId || Number(m.team1_rumah_id) },
+        team2: { rumahSukanId: m.team2?.rumahSukanId || Number(m.team2_rumah_id) }
       }))
     );
 
@@ -392,65 +420,144 @@ const KRKLPublicDisplay = () => {
 
   const standings = standingsSummary?.standings || [];
 
-  // Match Graph Component
+  // Match Graph Component - IDENTICAL TO ADMIN
   const MatchGraph = () => {
-    const completedMatches = matches.filter(m => m.status === 'completed');
+    // Use standings directly like admin does
+    const validStandings = standings.filter(s => s && s.houseId && s.name);
 
-    if (completedMatches.length === 0) {
-      return (
-        <div className="bg-white rounded-lg shadow-lg p-8">
-          <h3 className="text-2xl font-bold mb-6 text-gray-800 flex items-center gap-2">
-            <GitBranch className="w-7 h-7 text-purple-600" />
-            Graf Perlawanan
-          </h3>
-          <div className="text-center py-12">
-            <p className="text-gray-500 text-lg">Tiada perlawanan selesai lagi</p>
-          </div>
-        </div>
-      );
-    }
+    const graphData = validStandings.map(s => ({
+      id: s.houseId,
+      name: s.name,
+      color: s.color,
+      colorHex: s.colorHex,
+      matchesPlayed: s.matchesPlayed,
+      wins: s.wins,
+      leaguePoints: s.leaguePoints,
+      opponents: []
+    }));
+
+    matches.forEach(match => {
+      const team1HouseId = match.team1?.rumahSukanId || Number(match.team1_rumah_id);
+      const team2HouseId = match.team2?.rumahSukanId || Number(match.team2_rumah_id);
+
+      const rumah1 = graphData.find(g => g.id === team1HouseId);
+      const rumah2 = graphData.find(g => g.id === team2HouseId);
+
+      if (rumah1 && rumah2) {
+        if (!rumah1.opponents.includes(rumah2.name)) rumah1.opponents.push(rumah2.name);
+        if (!rumah2.opponents.includes(rumah1.name)) rumah2.opponents.push(rumah1.name);
+      }
+    });
 
     return (
       <div className="bg-white rounded-lg shadow-lg p-8">
-        <h3 className="text-2xl font-bold mb-6 text-gray-800 flex items-center gap-2">
-          <GitBranch className="w-7 h-7 text-purple-600" />
-          Graf Perlawanan
+        <h3 className="text-xl font-bold mb-6 text-gray-800 flex items-center gap-2">
+          <Network className="w-6 h-6 text-blue-600" />
+          Graf Perlawanan (Match Connection Graph)
         </h3>
-        <div className="grid gap-4">
-          {completedMatches.map(match => {
-            const team1 = teams.find(t => t.id === match.team1_id);
-            const team2 = teams.find(t => t.id === match.team2_id);
-            const rumah1 = rumahSukan.find(r => r.id === team1?.rumahSukanId);
-            const rumah2 = rumahSukan.find(r => r.id === team2?.rumahSukanId);
-            const winner = match.score1 > match.score2 ? rumah1 : match.score2 > match.score1 ? rumah2 : null;
 
-            return (
-              <div key={match.id} className="border-l-4 border-purple-500 pl-4 py-2">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <span className={`inline-block w-4 h-4 rounded-full mr-2 ${rumah1?.color || 'bg-gray-400'}`}></span>
-                    <span className="font-semibold">{rumah1?.name || 'Team 1'}</span>
-                    <span className="mx-2 text-gray-600">vs</span>
-                    <span className={`inline-block w-4 h-4 rounded-full mr-2 ${rumah2?.color || 'bg-gray-400'}`}></span>
-                    <span className="font-semibold">{rumah2?.name || 'Team 2'}</span>
+        <div className="grid md:grid-cols-2 gap-6">
+          {graphData.map(rumah => (
+            <div key={rumah.id} className="border-2 rounded-lg p-4" style={{ borderColor: rumah.colorHex }}>
+              <div className="flex items-center gap-3 mb-4">
+                <div className={`${rumah.color} w-4 h-4 rounded-full`}></div>
+                <h4 className="font-bold text-lg">{rumah.name}</h4>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-gray-700">Bertemu dengan:</p>
+                {rumah.opponents.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {rumah.opponents.map((opp, idx) => {
+                      const oppData = graphData.find(g => g.name === opp);
+                      return (
+                        <span key={idx} className="text-xs px-3 py-1 rounded-full" style={{
+                          backgroundColor: oppData?.colorHex + '20',
+                          color: oppData?.colorHex,
+                          border: `1px solid ${oppData?.colorHex}`
+                        }}>
+                          {opp}
+                        </span>
+                      );
+                    })}
                   </div>
-                  <div className="text-right">
-                    <div className="text-lg font-bold">
-                      {match.score1} - {match.score2}
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      {match.category}
-                    </div>
-                    {winner && (
-                      <div className={`text-sm font-semibold ${winner.color} bg-opacity-20 px-2 py-1 rounded mt-1`}>
-                        🏆 {winner.name}
-                      </div>
-                    )}
+                ) : (
+                  <p className="text-sm text-gray-500">Tiada perlawanan lagi</p>
+                )}
+              </div>
+              <div className="mt-4 pt-4 border-t">
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <p className="text-2xl font-bold" style={{ color: rumah.colorHex }}>{rumah.matchesPlayed}</p>
+                    <p className="text-xs text-gray-600">Matches</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-green-600">{rumah.wins}</p>
+                    <p className="text-xs text-gray-600">Menang</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-blue-600">{rumah.leaguePoints ?? rumah.points ?? 0}</p>
+                    <p className="text-xs text-gray-600">Points</p>
                   </div>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-8 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg">
+          <h4 className="font-bold text-lg mb-4 text-gray-800">Match Matrix (Siapa vs Siapa)</h4>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="p-2 text-left">VS</th>
+                  {validStandings.map(s => (
+                    <th key={s.houseId} className="p-2 text-center">
+                      <div className={`${s.color} w-3 h-3 rounded-full mx-auto mb-1`}></div>
+                      <div className="text-xs">{s.name.split(' ')[1]}</div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {validStandings.map(s1 => (
+                  <tr key={s1.houseId}>
+                    <td className="p-2 font-medium">
+                      <div className="flex items-center gap-2">
+                        <div className={`${s1.color} w-3 h-3 rounded-full`}></div>
+                        {s1.name.split(' ')[1]}
+                      </div>
+                    </td>
+                    {validStandings.map(s2 => {
+                      if (s1.houseId === s2.houseId) {
+                        return <td key={`${s1.houseId}-${s2.houseId}-diagonal`} className="p-2 text-center bg-gray-100">-</td>;
+                      }
+                      const match = matches.find(m => {
+                        const team1HouseId = m.team1?.rumahSukanId || Number(m.team1_rumah_id);
+                        const team2HouseId = m.team2?.rumahSukanId || Number(m.team2_rumah_id);
+                        return (
+                          (team1HouseId === s1.houseId && team2HouseId === s2.houseId) ||
+                          (team1HouseId === s2.houseId && team2HouseId === s1.houseId)
+                        );
+                      });
+                      if (!match || match.status === 'pending') {
+                        return <td key={`${s1.houseId}-${s2.houseId}-pending`} className="p-2 text-center text-gray-400">-</td>;
+                      }
+                      const team1HouseId = match.team1?.rumahSukanId || Number(match.team1_rumah_id);
+                      const isTeam1 = team1HouseId === s1.houseId;
+                      const score = isTeam1 ? `${match.score1}-${match.score2}` : `${match.score2}-${match.score1}`;
+                      const won = isTeam1 ? match.score1 > match.score2 : match.score2 > match.score1;
+                      return (
+                        <td key={`${s1.houseId}-${s2.houseId}-${match.id}`} className={`p-2 text-center font-medium ${won ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {score}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     );
@@ -490,7 +597,7 @@ const KRKLPublicDisplay = () => {
                   }`}
                 >
                   <RefreshCw className={`w-4 h-4 ${autoRefresh ? 'animate-spin' : ''}`} />
-                  Auto Refresh
+                  Auto Refresh (1s)
                 </button>
                 <button
                   onClick={fetchAllData}
@@ -504,6 +611,11 @@ const KRKLPublicDisplay = () => {
                 <div className="flex items-center gap-2">
                   <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-400' : 'bg-red-400'} ${isOnline ? 'animate-pulse' : ''}`}></div>
                   <span>{isOnline ? 'Connected' : 'Offline'}</span>
+                </div>
+                <span>•</span>
+                <div className="flex items-center gap-2">
+                  <RefreshCw className={`w-3 h-3 ${autoRefresh ? 'animate-spin text-green-400' : 'text-gray-400'}`} />
+                  <span className="text-green-400 font-medium">LIVE</span>
                 </div>
                 <span>•</span>
                 <span>Last Update: {lastUpdate.toLocaleTimeString('ms-MY')}</span>
@@ -579,7 +691,7 @@ const KRKLPublicDisplay = () => {
                   {liveResults.map(match => {
                     const rumah1 = match.team1?.rumahData;
                     const rumah2 = match.team2?.rumahData;
-                    const winner = match.score1 > match.score2 ? rumah1 : match.score2 > match.score1 ? rumah2 : null;
+                    const winner = (match.completed_at && match.score1 > match.score2) ? rumah1 : (match.completed_at && match.score2 > match.score1) ? rumah2 : null;
 
                     return (
                       <div key={match.id} className="bg-gradient-to-r from-green-50 to-emerald-50 p-6 rounded-lg border-2 border-green-200">
@@ -634,6 +746,67 @@ const KRKLPublicDisplay = () => {
                 </div>
               )}
             </div>
+
+            {/* Ongoing Matches */}
+            {ongoingMatches.length > 0 && (
+              <div className="bg-white rounded-lg shadow-lg p-8">
+                <h2 className="text-2xl font-bold mb-6 text-orange-600 flex items-center gap-2">
+                  <RefreshCw className="w-7 h-7 animate-spin" />
+                  Sedang Berlangsung
+                </h2>
+                <div className="space-y-4">
+                  {ongoingMatches.map(match => {
+                    const rumah1 = match.team1?.rumahData;
+                    const rumah2 = match.team2?.rumahData;
+
+                    return (
+                      <div key={match.id} className="bg-gradient-to-r from-orange-50 to-amber-50 p-6 rounded-lg border-2 border-orange-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-semibold text-orange-700">Match #{match.matchNumber} - {match.category}</span>
+                          <span className="text-xs bg-orange-600 text-white px-2 py-1 rounded-full animate-pulse">SEDANG BERLANGSUNG</span>
+                        </div>
+                        <div className="grid md:grid-cols-3 gap-4 items-center">
+                          <div>
+                            <span className={`${rumah1?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
+                              {rumah1?.name || 'Team 1'}
+                            </span>
+                            <div className="text-sm text-gray-600 mt-1">
+                              {match.team1?.mixedPair?.player1 && match.team1?.mixedPair?.player2 ?
+                                `${match.team1.mixedPair.player1} & ${match.team1.mixedPair.player2}` :
+                                match.team1?.mensPair?.player1 && match.team1?.mensPair?.player2 ?
+                                `${match.team1.mensPair.player1} & ${match.team1.mensPair.player2}` :
+                                'Players'
+                              }
+                            </div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-3xl font-bold text-orange-600">
+                              {match.score1} - {match.score2}
+                            </div>
+                            <div className="text-xs text-gray-500 mt-1">
+                              {new Date(match.timestamp || match.created_at).toLocaleTimeString('ms-MY', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className={`${rumah2?.color} text-white px-2 py-1 rounded text-xs font-medium`}>
+                              {rumah2?.name || 'Team 2'}
+                            </span>
+                            <div className="text-sm text-gray-600 mt-1">
+                              {match.team2?.mixedPair?.player1 && match.team2?.mixedPair?.player2 ?
+                                `${match.team2.mixedPair.player1} & ${match.team2.mixedPair.player2}` :
+                                match.team2?.mensPair?.player1 && match.team2?.mensPair?.player2 ?
+                                `${match.team2.mensPair.player1} & ${match.team2.mensPair.player2}` :
+                                'Players'
+                              }
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Upcoming Matches */}
             <div className="bg-white rounded-lg shadow-lg p-8">
@@ -783,7 +956,7 @@ const KRKLPublicDisplay = () => {
       <div className="bg-gray-800 text-white py-6 mt-12">
         <div className="container mx-auto px-4 text-center">
           <p className="text-lg">KRKL Tournament 2025 - Public Display</p>
-          <p className="text-gray-400 mt-2">Auto-refresh every 30 seconds</p>
+          <p className="text-gray-400 mt-2">Auto-refresh every 1 second</p>
         </div>
       </div>
     </div>

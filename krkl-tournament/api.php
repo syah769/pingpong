@@ -1,4 +1,11 @@
 <?php
+// Production error reporting - suppress warnings
+error_reporting(E_ALL & ~E_NOTICE & ~E_WARNING & ~E_DEPRECATED);
+ini_set('display_errors', 0);
+
+// Clean any output that might have been generated
+if (ob_get_length()) ob_clean();
+
 header('Content-Type: application/json');
 
 $allowedOrigins = [
@@ -24,10 +31,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 require_once __DIR__ . '/config.php';
-
-// Enable error reporting for debugging
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
 
 // Get request method
 $method = $_SERVER['REQUEST_METHOD'];
@@ -163,7 +166,7 @@ function handleGet($conn) {
             
         case 'matches':
             $result = $conn->query("
-                SELECT m.*, 
+                SELECT m.*,
                        t1.rumah_sukan_id as team1_rumah_id,
                        t2.rumah_sukan_id as team2_rumah_id,
                        r1.name as team1_rumah_name,
@@ -843,14 +846,105 @@ function handlePut($conn, $input) {
             $score1 = (int)($input['score1'] ?? 0);
             $score2 = (int)($input['score2'] ?? 0);
             $matchId = (int)($input['matchId'] ?? 0);
+
+            if ($matchId <= 0) {
+                echo json_encode(['success' => false, 'message' => 'Invalid match ID: ' . $matchId]);
+                break;
+            }
+
+            // Log the update attempt for debugging
+            error_log("API: Updating match $matchId with scores [$score1-$score2]");
+
+            // Get current status to preserve it
+            $statusCheck = $conn->prepare("SELECT status FROM matches WHERE id = ?");
+            $statusCheck->bind_param("i", $matchId);
+            $statusCheck->execute();
+            $currentStatus = $statusCheck->get_result()->fetch_assoc()['status'] ?? 'pending';
+            $statusCheck->close();
+
             $stmt = $conn->prepare("
                 UPDATE matches
-                SET score1 = ?, score2 = ?, status = 'completed', timestamp = NOW()
+                SET score1 = ?, score2 = ?, status = ?, timestamp = NOW()
                 WHERE id = ?
             ");
-            $stmt->bind_param("iii", $score1, $score2, $matchId);
-            $stmt->execute();
-            echo json_encode(['success' => true]);
+            if (!$stmt) {
+                $error = $conn->error;
+                error_log("API: Prepare statement failed - " . $error);
+                echo json_encode(['success' => false, 'message' => 'Database error: ' . $error]);
+                break;
+            }
+
+            $stmt->bind_param("iisi", $score1, $score2, $currentStatus, $matchId);
+            if ($stmt->execute()) {
+                error_log("API: Successfully updated match $matchId (status preserved: $currentStatus)");
+                echo json_encode(['success' => true, 'message' => 'Match score updated successfully']);
+            } else {
+                $error = $stmt->error;
+                error_log("API: Execute failed - " . $error);
+                echo json_encode(['success' => false, 'message' => 'Failed to update match: ' . $error]);
+            }
+            $stmt->close();
+            break;
+        case 'start_match':
+            $matchId = (int)($input['matchId'] ?? 0);
+
+            if ($matchId <= 0) {
+                echo json_encode(['success' => false, 'message' => 'Invalid match ID: ' . $matchId]);
+                break;
+            }
+
+            // Log the start attempt for debugging
+            error_log("API: Starting match $matchId");
+
+            $stmt = $conn->prepare("
+                UPDATE matches
+                SET status = 'playing', timestamp = NOW()
+                WHERE id = ?
+            ");
+            if (!$stmt) {
+                $error = $conn->error;
+                error_log("API: Prepare statement failed for start_match - " . $error);
+                echo json_encode(['success' => false, 'message' => 'Database error: ' . $error]);
+                break;
+            }
+
+            $stmt->bind_param("i", $matchId);
+            if ($stmt->execute()) {
+                error_log("API: Successfully started match $matchId");
+                echo json_encode(['success' => true, 'message' => 'Match started successfully']);
+            } else {
+                $error = $stmt->error;
+                error_log("API: Execute failed for start_match - " . $error);
+                echo json_encode(['success' => false, 'message' => 'Failed to start match: ' . $error]);
+            }
+            $stmt->close();
+            break;
+
+        case 'finalize_match':
+            $matchId = (int)($input['matchId'] ?? 0);
+
+            if ($matchId <= 0) {
+                echo json_encode(['success' => false, 'message' => 'Invalid match ID']);
+                break;
+            }
+
+            $stmt = $conn->prepare("
+                UPDATE matches
+                SET status = 'completed', completed_at = NOW()
+                WHERE id = ?
+            ");
+            if (!$stmt) {
+                echo json_encode(['success' => false, 'message' => 'Database error']);
+                break;
+            }
+
+            $stmt->bind_param("i", $matchId);
+            if ($stmt->execute()) {
+                echo json_encode(['success' => true]);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Failed to finalize match']);
+            }
+            $stmt->close();
             break;
 
         case 'assign_match_table':
