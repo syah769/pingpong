@@ -1306,6 +1306,7 @@ const KRKLPublicDisplay = () => {
                     <tr className="border-b-2 border-gray-300">
                       <th className="text-left py-4 px-4 text-lg font-semibold">#</th>
                       <th className="text-left py-4 px-4 text-lg font-semibold">House</th>
+                      <th className="text-center py-4 px-4 text-lg font-semibold">Placement</th>
                       <th className="text-center py-4 px-4 text-lg font-semibold">Spirit</th>
                       <th className="text-center py-4 px-4 text-lg font-semibold">Participation</th>
                       <th className="text-center py-4 px-4 text-lg font-semibold">Wins</th>
@@ -1335,6 +1336,11 @@ const KRKLPublicDisplay = () => {
                             <span className={`inline-block w-8 h-8 rounded-full ${team.color}`}></span>
                             <span className="text-lg font-bold">{team.name}</span>
                           </div>
+                        </td>
+                        <td className="text-center py-4 px-4">
+                          <span className="text-lg font-semibold text-blue-600">
+                            {formatScore(team.placementPoints)}
+                          </span>
                         </td>
                         <td className="text-center py-4 px-4">
                           <span className="text-lg font-semibold text-purple-600">
