@@ -69,8 +69,8 @@ export default function KRKLTournamentSystem() {
     return null;
   };
 
-  // API endpoint (use local dev domain)
-  const API_URL = 'http://pingpong.test/krkl-tournament/api.php';
+  // API endpoint (ngrok URL for public access)
+  const API_URL = 'https://pingpong-lfsa.ngrok.dev/api.php';
 
   const hasReportData = rumahSukan.length > 0 || teams.length > 0 || matches.length > 0;
   const textReportDisabled = matches.length === 0;
@@ -1400,14 +1400,22 @@ export default function KRKLTournamentSystem() {
       }
     });
 
+    // Check if tournament is complete (all matches finished)
+    const totalMatches = matches.length;
+    const completedMatchesCount = completedMatches.length;
+    const isTournamentComplete = totalMatches > 0 && completedMatchesCount === totalMatches;
+
     const placementPoints = new Map();
-    standings.forEach((entry, index) => {
-      if (!entry?.id) return;
-      if (index === 0) placementPoints.set(entry.id, 3);
-      else if (index === 1) placementPoints.set(entry.id, 2);
-      else if (index === 2) placementPoints.set(entry.id, 1);
-      else placementPoints.set(entry.id, 0);
-    });
+    // Only assign placement points if tournament is complete
+    if (isTournamentComplete) {
+      standings.forEach((entry, index) => {
+        if (!entry?.id) return;
+        if (index === 0) placementPoints.set(entry.id, 3);
+        else if (index === 1) placementPoints.set(entry.id, 2);
+        else if (index === 2) placementPoints.set(entry.id, 1);
+        else placementPoints.set(entry.id, 0);
+      });
+    }
 
     const participationPoints = new Map();
     teams.forEach((team) => {
@@ -2546,33 +2554,37 @@ export default function KRKLTournamentSystem() {
                       const totalPoints = houseSummary?.totalPoints ?? (standing.leaguePoints ?? standing.points ?? 0);
                       const formattedSpirit = formatScore(spiritPoints);
                       const formattedTotal = formatScore(totalPoints);
+                      
+                      // Check if tournament has started (any completed matches)
+                      const tournamentStarted = matches.some(m => m.status === 'completed');
+                      const displayRanking = tournamentStarted ? `#${index + 1}` : '-';
 
                       return (
                       <div
                         key={standing.name}
                         className={`p-6 rounded-lg border-2 ${
-                          index === 0 ? 'bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-400' :
-                          index === 1 ? 'bg-gradient-to-r from-gray-50 to-gray-100 border-gray-400' :
-                          index === 2 ? 'bg-gradient-to-r from-orange-50 to-yellow-50 border-orange-400' :
+                          tournamentStarted && index === 0 ? 'bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-400' :
+                          tournamentStarted && index === 1 ? 'bg-gradient-to-r from-gray-50 to-gray-100 border-gray-400' :
+                          tournamentStarted && index === 2 ? 'bg-gradient-to-r from-orange-50 to-yellow-50 border-orange-400' :
                           'bg-gray-50 border-gray-200'
                         }`}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-4">
                             <div className={`text-3xl font-bold ${
-                              index === 0 ? 'text-yellow-600' :
-                              index === 1 ? 'text-gray-600' :
-                              index === 2 ? 'text-orange-600' :
+                              tournamentStarted && index === 0 ? 'text-yellow-600' :
+                              tournamentStarted && index === 1 ? 'text-gray-600' :
+                              tournamentStarted && index === 2 ? 'text-orange-600' :
                               'text-gray-400'
                             }`}>
-                              #{index + 1}
+                              {displayRanking}
                             </div>
                             <div>
                               <div className="flex items-center gap-3">
                                 <span className={`${standing.color} text-white px-4 py-2 rounded-lg font-bold text-lg`}>
                                   {standing.name}
                                 </span>
-                                {index < 3 && (
+                                {tournamentStarted && index < 3 && (
                                   <Trophy className={`w-6 h-6 ${
                                     index === 0 ? 'text-yellow-500' :
                                     index === 1 ? 'text-gray-500' :

@@ -11,6 +11,7 @@ header('Content-Type: application/json');
 $allowedOrigins = [
     'http://localhost:3000',
     'http://pingpong.test',
+    'https://ad388fd6bd6b.ngrok-free.app',
 ];
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -495,28 +496,42 @@ function handlePost($conn, $input) {
                 foreach (($input['players'] ?? []) as $player) {
                     $playerName = $player['name'] ?? '';
                     $playerGender = $player['gender'] ?? '';
+                    $playerId = isset($player['id']) ? (int)$player['id'] : null;
                     
                     if ($playerName === '') {
                         continue;
                     }
                     
-                    $checkStmt = $conn->prepare("SELECT id FROM players WHERE name = ? AND rumah_sukan_id = ?");
-                    $checkStmt->bind_param("si", $playerName, $rumahSukanId);
-                    $checkStmt->execute();
-                    $existingPlayer = $checkStmt->get_result()->fetch_assoc();
-                    $checkStmt->close();
-                    
-                    if ($existingPlayer) {
-                        $playerId = $existingPlayer['id'];
-                    } else {
-                        $playerStmt = $conn->prepare("
-                            INSERT INTO players (name, gender, rumah_sukan_id) 
-                            VALUES (?, ?, ?)
+                    // If player has ID, update existing player
+                    if ($playerId && $playerId > 0) {
+                        $updatePlayerStmt = $conn->prepare("
+                            UPDATE players 
+                            SET name = ?, gender = ?
+                            WHERE id = ? AND rumah_sukan_id = ?
                         ");
-                        $playerStmt->bind_param("ssi", $playerName, $playerGender, $rumahSukanId);
-                        $playerStmt->execute();
-                        $playerId = $conn->insert_id;
-                        $playerStmt->close();
+                        $updatePlayerStmt->bind_param("ssii", $playerName, $playerGender, $playerId, $rumahSukanId);
+                        $updatePlayerStmt->execute();
+                        $updatePlayerStmt->close();
+                    } else {
+                        // Check if player already exists by name
+                        $checkStmt = $conn->prepare("SELECT id FROM players WHERE name = ? AND rumah_sukan_id = ?");
+                        $checkStmt->bind_param("si", $playerName, $rumahSukanId);
+                        $checkStmt->execute();
+                        $existingPlayer = $checkStmt->get_result()->fetch_assoc();
+                        $checkStmt->close();
+                        
+                        if ($existingPlayer) {
+                            $playerId = $existingPlayer['id'];
+                        } else {
+                            $playerStmt = $conn->prepare("
+                                INSERT INTO players (name, gender, rumah_sukan_id) 
+                                VALUES (?, ?, ?)
+                            ");
+                            $playerStmt->bind_param("ssi", $playerName, $playerGender, $rumahSukanId);
+                            $playerStmt->execute();
+                            $playerId = $conn->insert_id;
+                            $playerStmt->close();
+                        }
                     }
                     
                     $linkStmt = $conn->prepare("

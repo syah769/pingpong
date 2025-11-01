@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
-import { Eye, Trophy, GitBranch, RefreshCw, Settings, ArrowLeft, Network } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Eye, Trophy, GitBranch, RefreshCw, Network } from 'lucide-react';
 
 const KRKLPublicDisplay = () => {
   const [matches, setMatches] = useState([]);
@@ -13,26 +12,300 @@ const KRKLPublicDisplay = () => {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
   const [connectionError, setConnectionError] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
 
-  // API endpoint (use same as main system)
-  const API_URL = 'http://pingpong.test/krkl-tournament/api.php';
+  const resolvedApiUrl = process.env.REACT_APP_API_URL ?? (typeof window !== 'undefined' ? window.PUBLIC_API_URL : undefined);
+  const resolvedWsUrl = process.env.REACT_APP_WS_URL ?? (typeof window !== 'undefined' ? window.PUBLIC_WS_URL : undefined);
 
-  // Auto-refresh functionality
-  useEffect(() => {
-    if (!autoRefresh) return;
+  const API_URL = resolvedApiUrl ?? 'https://pingpong-lfsa.ngrok.dev/api.php';
+  const WS_URL = resolvedWsUrl ?? 'wss://pingpong-lfsa.ngrok.dev/ws';
 
-    const interval = setInterval(() => {
-      fetchAllData();
+  const wsRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+
+  const fetchResource = useCallback(async (endpoint) => {
+    const response = await fetch(endpoint, {
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+        Accept: 'application/json',
+      },
+    });
+    const contentType = response.headers?.get('content-type') || '';
+    const body = await response.text();
+
+    if (!response.ok) {
+      const snippet = body.length > 160 ? `${body.slice(0, 160)}...` : body;
+      throw new Error(`Request failed (${response.status}) for ${endpoint}: ${snippet}`);
+    }
+
+    try {
+      if (!body) return null;
+      return JSON.parse(body);
+    } catch (parseError) {
+      const snippet = body.length > 160 ? `${body.slice(0, 160)}...` : body;
+      throw new Error(`Invalid JSON from ${endpoint} (content-type: ${contentType || 'unknown'}). Preview: ${snippet}`);
+    }
+  }, []);
+
+  const applySnapshotData = useCallback((snapshot = {}) => {
+    const matchesDataRaw = snapshot.matches ?? snapshot.matchesData;
+    const teamsDataRaw = snapshot.teams ?? snapshot.teamsData;
+    const rumahDataRaw = snapshot.rumahSukan ?? snapshot.rumahData;
+    const spiritDataRaw = snapshot.spiritMarks ?? snapshot.spiritData;
+    const houseDataRaw = snapshot.housePoints ?? snapshot.houseData;
+
+    const matchesData = Array.isArray(matchesDataRaw) ? matchesDataRaw : [];
+    const teamsData = Array.isArray(teamsDataRaw) ? teamsDataRaw : [];
+    const rumahData = Array.isArray(rumahDataRaw) ? rumahDataRaw : [];
+    const spiritData = Array.isArray(spiritDataRaw) ? spiritDataRaw : [];
+    const houseData = Array.isArray(houseDataRaw) ? houseDataRaw : [];
+
+    if (matchesData.length > 0) {
+      const normalized = matchesData.map((match) => {
+        const matchNumber = match.match_number ?? match.matchNumber ?? 0;
+        const team1RumahId = match.team1_rumah_id ?? match.team1RumahId ?? null;
+        const team2RumahId = match.team2_rumah_id ?? match.team2RumahId ?? null;
+
+        const team1Data = teamsData.find(t => t.rumahSukanId === Number(team1RumahId));
+        const team2Data = teamsData.find(t => t.rumahSukanId === Number(team2RumahId));
+
+        const team1 = {
+          id: team1Data?.id ?? Number(match.team1_id) ?? null,
+          rumahSukanId: team1RumahId !== null ? Number(team1RumahId) : null,
+          rumahName: match.team1_rumah_name ?? '',
+          mixedPair: {
+            player1: match.category === 'Mixed Doubles' ? match.pair1_player1 : team1Data?.mixedPair?.player1 ?? match.pair1_player1,
+            player2: match.category === 'Mixed Doubles' ? match.pair1_player2 : team1Data?.mixedPair?.player2 ?? match.pair1_player2,
+          },
+          mensPair: {
+            player1: match.category === "Men's Doubles" ? match.pair1_player1 : team1Data?.mensPair?.player1 ?? match.pair1_player1,
+            player2: match.category === "Men's Doubles" ? match.pair1_player2 : team1Data?.mensPair?.player2 ?? match.pair1_player2,
+          },
+        };
+
+        const team2 = {
+          id: team2Data?.id ?? Number(match.team2_id) ?? null,
+          rumahSukanId: team2RumahId !== null ? Number(team2RumahId) : null,
+          rumahName: match.team2_rumah_name ?? '',
+          mixedPair: {
+            player1: match.category === 'Mixed Doubles' ? match.pair2_player1 : team2Data?.mixedPair?.player1 ?? match.pair2_player1,
+            player2: match.category === 'Mixed Doubles' ? match.pair2_player2 : team2Data?.mixedPair?.player2 ?? match.pair2_player2,
+          },
+          mensPair: {
+            player1: match.category === "Men's Doubles" ? match.pair2_player1 : team2Data?.mensPair?.player1 ?? match.pair2_player1,
+            player2: match.category === "Men's Doubles" ? match.pair2_player2 : team2Data?.mensPair?.player2 ?? match.pair2_player2,
+          },
+        };
+
+        const gamesRaw = Array.isArray(match.games)
+          ? match.games
+          : Array.from({ length: 5 }, (_, idx) => ({
+              gameNumber: idx + 1,
+              team1Score: match[`game${idx + 1}_team1`] ?? 0,
+              team2Score: match[`game${idx + 1}_team2`] ?? 0,
+            }));
+
+        let computedTeam1Wins = 0;
+        let computedTeam2Wins = 0;
+
+        const games = gamesRaw.map((game, idx) => {
+          const gameNumber = Number(game.gameNumber ?? game.game_number ?? idx + 1);
+          const team1Score = Number.isFinite(Number(game.team1Score ?? game.team1_score))
+            ? Number(game.team1Score ?? game.team1_score)
+            : 0;
+          const team2Score = Number.isFinite(Number(game.team2Score ?? game.team2_score))
+            ? Number(game.team2Score ?? game.team2_score)
+            : 0;
+          const scoreDiff = Math.abs(team1Score - team2Score);
+          const maxScore = Math.max(team1Score, team2Score);
+
+          const completed =
+            (game.completed ?? false) ||
+            (maxScore >= 11 && scoreDiff >= 2);
+
+          if (completed) {
+            if (team1Score > team2Score) {
+              computedTeam1Wins += 1;
+            } else if (team2Score > team1Score) {
+              computedTeam2Wins += 1;
+            }
+          }
+
+          return {
+            gameNumber,
+            team1Score,
+            team2Score,
+            completed,
+          };
+        });
+
+        const team1Wins =
+          match.team1Wins !== undefined && match.team1Wins !== null
+            ? Number(match.team1Wins)
+            : computedTeam1Wins;
+        const team2Wins =
+          match.team2Wins !== undefined && match.team2Wins !== null
+            ? Number(match.team2Wins)
+            : computedTeam2Wins;
+
+        const tableIdRaw = match.table_id ?? match.tableId ?? null;
+        const tableNameRaw = match.table_name ?? match.tableName ?? null;
+        const tableTextRaw = match.table ?? match.tableLabel ?? null;
+
+        const deriveTableLabel = () => {
+          if (typeof tableTextRaw === 'string' && tableTextRaw.trim() !== '') {
+            const clean = tableTextRaw.trim();
+            const single = clean.match(/^[A-Za-z]$/);
+            if (single) return single[0].toUpperCase();
+            const fromWord = clean.match(/table\s*([A-Za-z0-9]+)/i);
+            if (fromWord) return fromWord[1].toUpperCase();
+            return clean;
+          }
+          if (typeof tableNameRaw === 'string' && tableNameRaw.trim() !== '') {
+            const clean = tableNameRaw.trim();
+            const fromWord = clean.match(/table\s*([A-Za-z0-9]+)/i);
+            if (fromWord) return fromWord[1].toUpperCase();
+            return clean;
+          }
+          if (tableIdRaw !== undefined && tableIdRaw !== null) {
+            const numericId = Number(tableIdRaw);
+            if (Number.isInteger(numericId)) {
+              if (numericId === 1) return 'A';
+              if (numericId === 2) return 'B';
+              return `${numericId}`;
+            }
+          }
+          return null;
+        };
+
+        const tableLabel = deriveTableLabel();
+        const tableId = tableIdRaw !== undefined && tableIdRaw !== null ? Number(tableIdRaw) : null;
+        const tableName = typeof tableNameRaw === 'string' && tableNameRaw.trim() !== '' ? tableNameRaw.trim() : null;
+        const tableDisplayName = tableName || (tableLabel ? `Table ${tableLabel}` : null);
+
+        const pair1 = {
+          player1: match.pair1_player1 ?? (match.pair1?.player1 ?? ''),
+          player2: match.pair1_player2 ?? (match.pair1?.player2 ?? ''),
+        };
+
+        const pair2 = {
+          player1: match.pair2_player1 ?? (match.pair2?.player1 ?? ''),
+          player2: match.pair2_player2 ?? (match.pair2?.player2 ?? ''),
+        };
+
+        return {
+          id: match.id,
+          matchNumber,
+          team1,
+          team2,
+          category: match.category ?? '',
+          status: match.status ?? 'pending',
+          score1: match.score1 !== undefined && match.score1 !== null ? Number(match.score1) : team1Wins,
+          score2: match.score2 !== undefined && match.score2 !== null ? Number(match.score2) : team2Wins,
+          team1Wins,
+          team2Wins,
+          games,
+          currentGame: match.current_game !== undefined && match.current_game !== null
+            ? Number(match.current_game)
+            : match.currentGame !== undefined && match.currentGame !== null
+            ? Number(match.currentGame)
+            : games.find(game => !game.completed)?.gameNumber ?? 1,
+          points1: match.points1,
+          points2: match.points2,
+          tableId,
+          tableName: tableDisplayName,
+          tableLabel,
+          table: tableDisplayName,
+          pair1,
+          pair2,
+          match_time: match.match_time,
+          timestamp: match.timestamp ?? match.created_at,
+          completed_at: match.completed_at,
+          created_at: match.created_at,
+          updated_at: match.updated_at,
+        };
+      });
+
+      setMatches(normalized);
+    } else {
+      setMatches([]);
+    }
+
+    if (teamsData.length > 0) {
+      setTeams(teamsData);
+    } else {
+      setTeams([]);
+    }
+
+    if (rumahData.length > 0) {
+      setRumahSukan(rumahData);
+    } else {
+      setRumahSukan([]);
+    }
+
+    if (spiritData.length > 0) {
+      setSpiritMarks(spiritData);
+    } else {
+      setSpiritMarks([]);
+    }
+
+    if (houseData.length > 0) {
+      setHousePoints(houseData);
+    } else {
+      setHousePoints([]);
+    }
+  }, []);
+
+  const fetchAllData = useCallback(async () => {
+    // Prevent multiple concurrent requests
+    if (window.isFetching) return;
+    window.isFetching = true;
+
+    try {
+      // Use same API endpoints as main system with stronger validation
+      const [matchesData, teamsData, rumahData, spiritData, houseData] = await Promise.all([
+        fetchResource(`${API_URL}?action=matches`),
+        fetchResource(`${API_URL}?action=teams`),
+        fetchResource(`${API_URL}?action=rumah_sukan`),
+        fetchResource(`${API_URL}?resource=spirit_marks`),
+        fetchResource(`${API_URL}?resource=house_points`)
+      ]);
+
+      applySnapshotData({
+        matches: matchesData,
+        teams: teamsData,
+        rumahSukan: rumahData,
+        spiritMarks: spiritData,
+        housePoints: houseData,
+      });
+
+      setIsOnline(true);
+      setConnectionError(false);
       setLastUpdate(new Date());
-    }, 1000); // Refresh every 1 second
+    } catch (error) {
+      console.error('Error fetching tournament data:', error);
 
-    return () => clearInterval(interval);
-  }, [autoRefresh]);
+      // Set empty state on error to prevent crashes
+      setMatches([]);
+      setTeams([]);
+      setRumahSukan([]);
+      setSpiritMarks([]);
+      setHousePoints([]);
+
+      // Set error states
+      setIsOnline(false);
+      setConnectionError(true);
+    } finally {
+      // Reset fetching flag
+      window.isFetching = false;
+    }
+  }, [API_URL, applySnapshotData, fetchResource]);
 
   // Initial data fetch
   useEffect(() => {
     fetchAllData();
-  }, []);
+  }, [fetchAllData]);
 
   const formatScore = (value) => {
     const numeric = Number(value);
@@ -52,241 +325,109 @@ const KRKLPublicDisplay = () => {
     if (match.category === "Men's Doubles") return 'Table B';
     return null;
   };
-
-  const fetchAllData = async () => {
-    // Prevent multiple concurrent requests
-    if (window.isFetching) return;
-    window.isFetching = true;
-
-    try {
-      // Use same API endpoints as main system
-      const [matchesRes, teamsRes, rumahRes, spiritRes, houseRes] = await Promise.all([
-        fetch(`${API_URL}?action=matches`),
-        fetch(`${API_URL}?action=teams`),
-        fetch(`${API_URL}?action=rumah_sukan`),
-        fetch(`${API_URL}?resource=spirit_marks`),
-        fetch(`${API_URL}?resource=house_points`)
-      ]);
-
-      // Parse responses like main system does
-      const matchesData = await matchesRes.json();
-      const teamsData = await teamsRes.json();
-      const rumahData = await rumahRes.json();
-      const spiritData = await spiritRes.json();
-      const houseData = await houseRes.json();
-
-      // Set data directly (main system doesn't check for success field)
-      if (Array.isArray(matchesData) && matchesData.length > 0) {
-        const normalized = matchesData.map((match) => {
-          const matchNumber = match.match_number ?? match.matchNumber ?? 0;
-          const team1RumahId = match.team1_rumah_id ?? match.team1RumahId ?? null;
-          const team2RumahId = match.team2_rumah_id ?? match.team2RumahId ?? null;
-
-          // Find the correct team data using rumahSukanId
-          const team1Data = teamsData.find(t => t.rumahSukanId === Number(team1RumahId));
-          const team2Data = teamsData.find(t => t.rumahSukanId === Number(team2RumahId));
-
-          const team1 = {
-            id: team1Data?.id ?? Number(match.team1_id) ?? null,
-            rumahSukanId: team1RumahId !== null ? Number(team1RumahId) : null,
-            rumahName: match.team1_rumah_name ?? '',
-            mixedPair: {
-              player1: match.category === 'Mixed Doubles' ? match.pair1_player1 : team1Data?.mixedPair?.player1 ?? match.pair1_player1,
-              player2: match.category === 'Mixed Doubles' ? match.pair1_player2 : team1Data?.mixedPair?.player2 ?? match.pair1_player2,
-            },
-            mensPair: {
-              player1: match.category === "Men's Doubles" ? match.pair1_player1 : team1Data?.mensPair?.player1 ?? match.pair1_player1,
-              player2: match.category === "Men's Doubles" ? match.pair1_player2 : team1Data?.mensPair?.player2 ?? match.pair1_player2,
-            },
-          };
-
-          const team2 = {
-            id: team2Data?.id ?? Number(match.team2_id) ?? null,
-            rumahSukanId: team2RumahId !== null ? Number(team2RumahId) : null,
-            rumahName: match.team2_rumah_name ?? '',
-            mixedPair: {
-              player1: match.category === 'Mixed Doubles' ? match.pair2_player1 : team2Data?.mixedPair?.player1 ?? match.pair2_player1,
-              player2: match.category === 'Mixed Doubles' ? match.pair2_player2 : team2Data?.mixedPair?.player2 ?? match.pair2_player2,
-            },
-            mensPair: {
-              player1: match.category === "Men's Doubles" ? match.pair2_player1 : team2Data?.mensPair?.player1 ?? match.pair2_player1,
-              player2: match.category === "Men's Doubles" ? match.pair2_player2 : team2Data?.mensPair?.player2 ?? match.pair2_player2,
-            },
-          };
-
-          const gamesRaw = Array.isArray(match.games)
-            ? match.games
-            : Array.from({ length: 5 }, (_, idx) => ({
-                gameNumber: idx + 1,
-                team1Score: match[`game${idx + 1}_team1`] ?? 0,
-                team2Score: match[`game${idx + 1}_team2`] ?? 0,
-              }));
-
-          let computedTeam1Wins = 0;
-          let computedTeam2Wins = 0;
-
-          const games = gamesRaw.map((game, idx) => {
-            const gameNumber = Number(game.gameNumber ?? game.game_number ?? idx + 1);
-            const team1Score = Number.isFinite(Number(game.team1Score ?? game.team1_score))
-              ? Number(game.team1Score ?? game.team1_score)
-              : 0;
-            const team2Score = Number.isFinite(Number(game.team2Score ?? game.team2_score))
-              ? Number(game.team2Score ?? game.team2_score)
-              : 0;
-            const scoreDiff = Math.abs(team1Score - team2Score);
-            const maxScore = Math.max(team1Score, team2Score);
-
-            const completed =
-              (game.completed ?? false) ||
-              (maxScore >= 11 && scoreDiff >= 2);
-
-            if (completed) {
-              if (team1Score > team2Score) {
-                computedTeam1Wins += 1;
-              } else if (team2Score > team1Score) {
-                computedTeam2Wins += 1;
-              }
-            }
-
-            return {
-              gameNumber,
-              team1Score,
-              team2Score,
-              completed,
-            };
-          });
-
-          const team1Wins =
-            match.team1Wins !== undefined && match.team1Wins !== null
-              ? Number(match.team1Wins)
-              : computedTeam1Wins;
-          const team2Wins =
-            match.team2Wins !== undefined && match.team2Wins !== null
-              ? Number(match.team2Wins)
-              : computedTeam2Wins;
-
-          const tableIdRaw = match.table_id ?? match.tableId ?? null;
-          const tableNameRaw = match.table_name ?? match.tableName ?? null;
-          const tableTextRaw = match.table ?? match.tableLabel ?? null;
-
-          const deriveTableLabel = () => {
-            if (typeof tableTextRaw === 'string' && tableTextRaw.trim() !== '') {
-              const clean = tableTextRaw.trim();
-              const single = clean.match(/^[A-Za-z]$/);
-              if (single) return single[0].toUpperCase();
-              const fromWord = clean.match(/table\s*([A-Za-z0-9]+)/i);
-              if (fromWord) return fromWord[1].toUpperCase();
-              return clean;
-            }
-            if (typeof tableNameRaw === 'string' && tableNameRaw.trim() !== '') {
-              const clean = tableNameRaw.trim();
-              const fromWord = clean.match(/table\s*([A-Za-z0-9]+)/i);
-              if (fromWord) return fromWord[1].toUpperCase();
-              return clean;
-            }
-            if (tableIdRaw !== undefined && tableIdRaw !== null) {
-              const numericId = Number(tableIdRaw);
-              if (Number.isInteger(numericId)) {
-                if (numericId === 1) return 'A';
-                if (numericId === 2) return 'B';
-                return `${numericId}`;
-              }
-            }
-            return null;
-          };
-
-          const tableLabel = deriveTableLabel();
-          const tableId = tableIdRaw !== undefined && tableIdRaw !== null ? Number(tableIdRaw) : null;
-          const tableName = typeof tableNameRaw === 'string' && tableNameRaw.trim() !== '' ? tableNameRaw.trim() : null;
-          const tableDisplayName = tableName || (tableLabel ? `Table ${tableLabel}` : null);
-
-          const pair1 = {
-            player1: match.pair1_player1 ?? (match.pair1?.player1 ?? ''),
-            player2: match.pair1_player2 ?? (match.pair1?.player2 ?? ''),
-          };
-
-          const pair2 = {
-            player1: match.pair2_player1 ?? (match.pair2?.player1 ?? ''),
-            player2: match.pair2_player2 ?? (match.pair2?.player2 ?? ''),
-          };
-
-          return {
-            id: match.id,
-            matchNumber,
-            team1,
-            team2,
-            category: match.category ?? '',
-            status: match.status ?? 'pending',
-            score1: match.score1 !== undefined && match.score1 !== null ? Number(match.score1) : team1Wins,
-            score2: match.score2 !== undefined && match.score2 !== null ? Number(match.score2) : team2Wins,
-            team1Wins,
-            team2Wins,
-            games,
-            currentGame: match.current_game !== undefined && match.current_game !== null
-              ? Number(match.current_game)
-              : match.currentGame !== undefined && match.currentGame !== null
-              ? Number(match.currentGame)
-              : games.find(game => !game.completed)?.gameNumber ?? 1,
-            points1: match.points1,
-            points2: match.points2,
-            tableId,
-            tableName: tableDisplayName,
-            tableLabel,
-            table: tableDisplayName,
-            pair1,
-            pair2,
-            match_time: match.match_time,
-            timestamp: match.timestamp ?? match.created_at,
-            completed_at: match.completed_at,
-            created_at: match.created_at,
-            updated_at: match.updated_at,
-          };
-        });
-        setMatches(normalized);
-      } else {
-        setMatches([]);
+  useEffect(() => {
+    if (!autoRefresh) {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
       }
-
-      if (Array.isArray(teamsData) && teamsData.length > 0) {
-        setTeams(teamsData);
-      } else {
-        setTeams([]);
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
-
-      if (Array.isArray(rumahData) && rumahData.length > 0) {
-        setRumahSukan(rumahData);
-      } else {
-        setRumahSukan([]);
-      }
-
-      if (Array.isArray(spiritData)) {
-        setSpiritMarks(spiritData);
-      }
-
-      if (Array.isArray(houseData)) {
-        setHousePoints(houseData);
-      }
-
-      setIsOnline(true);
+      reconnectAttemptsRef.current = 0;
+      setSocketConnected(false);
       setConnectionError(false);
-    } catch (error) {
-      console.error('Error fetching tournament data:', error);
-
-      // Set empty state on error to prevent crashes
-      setMatches([]);
-      setTeams([]);
-      setRumahSukan([]);
-      setSpiritMarks([]);
-      setHousePoints([]);
-
-      // Set error states
-      setIsOnline(false);
-      setConnectionError(true);
-    } finally {
-      // Reset fetching flag
-      window.isFetching = false;
+      return undefined;
     }
-  };
+
+    let cancelled = false;
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+    };
+
+    function scheduleReconnect() {
+      if (cancelled || !autoRefresh) return;
+      const attempt = reconnectAttemptsRef.current + 1;
+      reconnectAttemptsRef.current = attempt;
+      const delay = Math.min(1000 * 2 ** (attempt - 1), 30000);
+      clearReconnectTimer();
+      reconnectTimeoutRef.current = setTimeout(() => {
+        if (cancelled || !autoRefresh) return;
+        connect();
+      }, delay);
+    }
+
+    function connect() {
+      if (cancelled || !autoRefresh) return;
+
+      try {
+        const ws = new WebSocket(WS_URL);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          reconnectAttemptsRef.current = 0;
+          setSocketConnected(true);
+          setIsOnline(true);
+          setConnectionError(false);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message?.type === 'tournament-update') {
+              applySnapshotData(message.payload || {});
+              const fetchedAt = message.payload?.fetchedAt;
+              if (fetchedAt) {
+                const parsed = new Date(fetchedAt);
+                setLastUpdate(Number.isNaN(parsed.getTime()) ? new Date() : parsed);
+              } else {
+                setLastUpdate(new Date());
+              }
+              setIsOnline(true);
+              setConnectionError(false);
+            }
+          } catch (error) {
+            console.error('Error handling WebSocket message:', error);
+          }
+        };
+
+        ws.onclose = () => {
+          wsRef.current = null;
+          setSocketConnected(false);
+          if (cancelled || !autoRefresh) return;
+          setIsOnline(false);
+          setConnectionError(true);
+          scheduleReconnect();
+        };
+
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          setConnectionError(true);
+          ws.close();
+        };
+      } catch (error) {
+        console.error('Failed to establish WebSocket connection:', error);
+        setConnectionError(true);
+        scheduleReconnect();
+      }
+    }
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      clearReconnectTimer();
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [WS_URL, autoRefresh, applySnapshotData]);
 
   // Process matches for live display
   const { liveResults, upcomingMatches, ongoingMatches } = useMemo(() => {
@@ -722,9 +863,9 @@ const KRKLPublicDisplay = () => {
                       : 'bg-gray-600 hover:bg-gray-700 text-white'
                   }`}
                 >
-                  <RefreshCw className={`w-4 h-4 ${autoRefresh ? 'animate-spin' : ''}`} />
-                  <span className="hidden sm:inline">Auto Refresh (1s)</span>
-                  <span className="sm:hidden">Auto</span>
+                  <Network className="w-4 h-4" />
+                  <span className="hidden sm:inline">{autoRefresh ? 'Live Updates On' : 'Live Updates Off'}</span>
+                  <span className="sm:hidden">{autoRefresh ? 'Live' : 'Off'}</span>
                 </button>
                 <button
                   onClick={fetchAllData}
@@ -742,8 +883,26 @@ const KRKLPublicDisplay = () => {
                 </div>
                 <span className="hidden sm:inline">•</span> */}
                 <div className="flex items-center justify-center sm:justify-start gap-2">
-                  <RefreshCw className={`w-3 h-3 ${autoRefresh ? 'animate-spin text-green-400' : 'text-gray-400'}`} />
-                  <span className="text-green-400 font-medium">LIVE</span>
+                  <Network
+                    className={`w-3 h-3 ${
+                      socketConnected
+                        ? 'text-green-400'
+                        : autoRefresh
+                        ? 'text-yellow-300'
+                        : 'text-gray-400'
+                    }`}
+                  />
+                  <span
+                    className={`font-medium ${
+                      socketConnected
+                        ? 'text-green-400'
+                        : autoRefresh
+                        ? 'text-yellow-200'
+                        : 'text-gray-300'
+                    }`}
+                  >
+                    {socketConnected ? 'LIVE' : autoRefresh ? 'CONNECTING…' : 'PAUSED'}
+                  </span>
                 </div>
                 <span className="hidden sm:inline">•</span>
                 <span className="hidden sm:inline">Last Update: {lastUpdate.toLocaleTimeString('en-US')}</span>
@@ -751,7 +910,7 @@ const KRKLPublicDisplay = () => {
               </div>
               {connectionError && (
                 <div className="mt-2 p-2 bg-red-600 bg-opacity-20 border border-red-400 rounded text-xs sm:text-sm text-red-100">
-                  ⚠️ Connection error: Unable to fetch tournament data. Please check your network connection.
+                  ⚠️ Connection issue: Real-time updates unavailable. Please check the WebSocket bridge or network.
                 </div>
               )}
             </div>
@@ -840,7 +999,7 @@ const KRKLPublicDisplay = () => {
                                 {getTableDisplayName(match)}
                               </span>
                             )}
-                            <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">SELESAI</span>
+                            <span className="text-xs bg-green-600 text-white px-2 py-1 rounded-full">COMPLETED</span>
                           </div>
                         </div>
                         <div className="grid md:grid-cols-3 gap-4 items-center">
@@ -943,7 +1102,7 @@ const KRKLPublicDisplay = () => {
                             )}
                             {match.status === 'completed' && (
                               <span className="text-xs bg-green-600 text-white px-3 py-1 rounded-full font-semibold uppercase tracking-wide">
-                                Finished
+                                Completed
                               </span>
                             )}
                             {match.status === 'pending' && (
@@ -1096,7 +1255,7 @@ const KRKLPublicDisplay = () => {
                                   {tableDisplay}
                                 </span>
                               )}
-                              <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">AKAN DATANG</span>
+                              <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">UPCOMING</span>
                             </div>
                           </div>
                         <div className="grid md:grid-cols-3 gap-4 items-center">
@@ -1155,7 +1314,9 @@ const KRKLPublicDisplay = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {standings.map((team, index) => (
+                    {standings.map((team, index) => {
+                      const tournamentStarted = matches.some(m => m.status === 'completed');
+                      return (
                       <tr key={team.houseId} className={`border-b hover:bg-gray-50 transition-colors ${index < 3 ? 'bg-gradient-to-r' : ''} ${
                         index === 0 ? 'from-yellow-50 to-amber-50' :
                         index === 1 ? 'from-gray-50 to-slate-50' :
@@ -1163,10 +1324,10 @@ const KRKLPublicDisplay = () => {
                       }`}>
                         <td className="py-4 px-4">
                           <div className="flex items-center gap-2">
-                            {index === 0 && <span className="text-2xl">🥇</span>}
-                            {index === 1 && <span className="text-2xl">🥈</span>}
-                            {index === 2 && <span className="text-2xl">🥉</span>}
-                            <span className="text-lg font-bold">#{index + 1}</span>
+                            {tournamentStarted && index === 0 && <span className="text-2xl">🥇</span>}
+                            {tournamentStarted && index === 1 && <span className="text-2xl">🥈</span>}
+                            {tournamentStarted && index === 2 && <span className="text-2xl">🥉</span>}
+                            <span className="text-lg font-bold">{tournamentStarted ? `#${index + 1}` : '-'}</span>
                           </div>
                         </td>
                         <td className="py-4 px-4">
@@ -1197,7 +1358,8 @@ const KRKLPublicDisplay = () => {
                           </span>
                         </td>
                       </tr>
-                    ))}
+                    );
+                    })}
                   </tbody>
                 </table>
               </div>

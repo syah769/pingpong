@@ -1,0 +1,17 @@
+version: "2"
+authtoken: 2USMSEyXrelomoYUJ5o9JEdxnfK_51wStqViW9sE37fbbk6Cz
+
+tunnels:
+  php-api:
+    proto: http
+    addr: 8001
+    host_header: rewrite
+    schemes:
+      - https
+  
+  websocket:
+    proto: http
+    addr: 4000
+    host_header: rewrite
+    schemes:
+      - https
