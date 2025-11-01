@@ -586,84 +586,104 @@ function handlePost($conn, $input) {
             
             
         case 'generate_matches':
-            // Get all teams
-            $result = $conn->query("SELECT * FROM teams ORDER BY id");
-            $teams = [];
+            // Get all teams indexed by rumah_sukan_id
+            $result = $conn->query("SELECT * FROM teams ORDER BY rumah_sukan_id");
+            $teamsByRumah = [];
             while ($row = $result->fetch_assoc()) {
-                $teams[] = $row;
+                $teamsByRumah[(int)$row['rumah_sukan_id']] = $row;
             }
             
             // Clear existing matches
             $conn->query("DELETE FROM matches");
             
-            // Generate round-robin matches
-            $matchNumber = 1;
-            for ($i = 0; $i < count($teams); $i++) {
-                for ($j = $i + 1; $j < count($teams); $j++) {
-                    $teamIId = (int)$teams[$i]['id'];
-                    $teamJId = (int)$teams[$j]['id'];
-
-                    $teamIMixedTableId = !empty($teams[$i]['mixed_doubles_table_id']) ? (int)$teams[$i]['mixed_doubles_table_id'] : null;
-                    $teamJMixedTableId = !empty($teams[$j]['mixed_doubles_table_id']) ? (int)$teams[$j]['mixed_doubles_table_id'] : null;
-                    $mixedTableId = $teamIMixedTableId ?? $teamJMixedTableId;
-                    if ($teamIMixedTableId !== null && $teamJMixedTableId !== null && $teamJMixedTableId === $teamIMixedTableId) {
-                        $mixedTableId = $teamIMixedTableId;
-                    }
-
-                    $teamIMensTableId = !empty($teams[$i]['mens_doubles_table_id']) ? (int)$teams[$i]['mens_doubles_table_id'] : null;
-                    $teamJMensTableId = !empty($teams[$j]['mens_doubles_table_id']) ? (int)$teams[$j]['mens_doubles_table_id'] : null;
-                    $mensTableId = $teamIMensTableId ?? $teamJMensTableId;
-                    if ($teamIMensTableId !== null && $teamJMensTableId !== null && $teamJMensTableId === $teamIMensTableId) {
-                        $mensTableId = $teamIMensTableId;
-                    }
-
-                    // Mixed Doubles
-                    $stmt = $conn->prepare("
-                        INSERT INTO matches (match_number, category, team1_id, team2_id, pair1_player1, pair1_player2, pair2_player1, pair2_player2, table_id) 
-                        VALUES (?, 'Mixed Doubles', ?, ?, ?, ?, ?, ?, ?)
-                    ");
-                    $teamIMixedPlayer1 = $teams[$i]['mixed_pair_player1'] ?? '';
-                    $teamIMixedPlayer2 = $teams[$i]['mixed_pair_player2'] ?? '';
-                    $teamJMixedPlayer1 = $teams[$j]['mixed_pair_player1'] ?? '';
-                    $teamJMixedPlayer2 = $teams[$j]['mixed_pair_player2'] ?? '';
-                    $mixedMatchNumber = $matchNumber++;
-                    $stmt->bind_param("iiissssi",
-                        $mixedMatchNumber,
-                        $teamIId,
-                        $teamJId,
-                        $teamIMixedPlayer1,
-                        $teamIMixedPlayer2,
-                        $teamJMixedPlayer1,
-                        $teamJMixedPlayer2,
-                        $mixedTableId
-                    );
-                    $stmt->execute();
-                    
-                    // Men's Doubles
-                    $stmt = $conn->prepare("
-                        INSERT INTO matches (match_number, category, team1_id, team2_id, pair1_player1, pair1_player2, pair2_player1, pair2_player2, table_id) 
-                        VALUES (?, 'Men\'s Doubles', ?, ?, ?, ?, ?, ?, ?)
-                    ");
-                    $teamIMensPlayer1 = $teams[$i]['mens_pair_player1'] ?? '';
-                    $teamIMensPlayer2 = $teams[$i]['mens_pair_player2'] ?? '';
-                    $teamJMensPlayer1 = $teams[$j]['mens_pair_player1'] ?? '';
-                    $teamJMensPlayer2 = $teams[$j]['mens_pair_player2'] ?? '';
-                    $mensMatchNumber = $matchNumber++;
-                    $stmt->bind_param("iiissssi",
-                        $mensMatchNumber,
-                        $teamIId,
-                        $teamJId,
-                        $teamIMensPlayer1,
-                        $teamIMensPlayer2,
-                        $teamJMensPlayer1,
-                        $teamJMensPlayer2,
-                        $mensTableId
-                    );
-                    $stmt->execute();
+            // Match schedule based on T&C Section 12
+            // Format: ['time' => 'HH:MM:SS', 'rumah1' => X, 'rumah2' => Y]
+            // Rumah IDs: 1=Merah, 2=Biru, 3=Hijau, 4=Kuning
+            $matchSchedule = [
+                1 => ['time' => '09:00:00', 'pair' => [1, 3]], // Merah vs Hijau
+                2 => ['time' => '09:20:00', 'pair' => [2, 4]], // Biru vs Kuning
+                3 => ['time' => '09:40:00', 'pair' => [1, 4]], // Merah vs Kuning
+                4 => ['time' => '10:00:00', 'pair' => [3, 2]], // Hijau vs Biru
+                5 => ['time' => '10:50:00', 'pair' => [1, 2]], // Merah vs Biru (after break)
+                6 => ['time' => '11:10:00', 'pair' => [4, 3]], // Kuning vs Hijau
+            ];
+            
+            // Get default table IDs
+            $tableA = $conn->query("SELECT id FROM play_tables WHERE name = 'Table A' LIMIT 1")->fetch_assoc();
+            $tableB = $conn->query("SELECT id FROM play_tables WHERE name = 'Table B' LIMIT 1")->fetch_assoc();
+            $tableAId = $tableA ? (int)$tableA['id'] : 1;
+            $tableBId = $tableB ? (int)$tableB['id'] : 2;
+            
+            // Generate matches according to schedule
+            foreach ($matchSchedule as $matchNum => $schedule) {
+                $rumah1 = $schedule['pair'][0];
+                $rumah2 = $schedule['pair'][1];
+                
+                if (!isset($teamsByRumah[$rumah1]) || !isset($teamsByRumah[$rumah2])) {
+                    continue; // Skip if teams don't exist
                 }
+                
+                $teamI = $teamsByRumah[$rumah1];
+                $teamJ = $teamsByRumah[$rumah2];
+                $matchTime = '2025-11-01 ' . $schedule['time'];
+                
+                $teamIId = (int)$teamI['id'];
+                $teamJId = (int)$teamJ['id'];
+
+                // Mixed Doubles - Table A
+                $teamIMixedTableId = !empty($teamI['mixed_doubles_table_id']) ? (int)$teamI['mixed_doubles_table_id'] : $tableAId;
+                $teamJMixedTableId = !empty($teamJ['mixed_doubles_table_id']) ? (int)$teamJ['mixed_doubles_table_id'] : $tableAId;
+                $mixedTableId = $teamIMixedTableId;
+
+                $stmt = $conn->prepare("
+                    INSERT INTO matches (match_number, category, team1_id, team2_id, pair1_player1, pair1_player2, pair2_player1, pair2_player2, table_id, match_time) 
+                    VALUES (?, 'Mixed Doubles', ?, ?, ?, ?, ?, ?, ?, ?)
+                ");
+                $teamIMixedPlayer1 = $teamI['mixed_pair_player1'] ?? '';
+                $teamIMixedPlayer2 = $teamI['mixed_pair_player2'] ?? '';
+                $teamJMixedPlayer1 = $teamJ['mixed_pair_player1'] ?? '';
+                $teamJMixedPlayer2 = $teamJ['mixed_pair_player2'] ?? '';
+                $stmt->bind_param("iiissssis",
+                    $matchNum,
+                    $teamIId,
+                    $teamJId,
+                    $teamIMixedPlayer1,
+                    $teamIMixedPlayer2,
+                    $teamJMixedPlayer1,
+                    $teamJMixedPlayer2,
+                    $mixedTableId,
+                    $matchTime
+                );
+                $stmt->execute();
+                
+                // Men's Doubles - Table B (same match number, same time)
+                $teamIMensTableId = !empty($teamI['mens_doubles_table_id']) ? (int)$teamI['mens_doubles_table_id'] : $tableBId;
+                $teamJMensTableId = !empty($teamJ['mens_doubles_table_id']) ? (int)$teamJ['mens_doubles_table_id'] : $tableBId;
+                $mensTableId = $teamIMensTableId;
+
+                $stmt = $conn->prepare("
+                    INSERT INTO matches (match_number, category, team1_id, team2_id, pair1_player1, pair1_player2, pair2_player1, pair2_player2, table_id, match_time) 
+                    VALUES (?, 'Men\'s Doubles', ?, ?, ?, ?, ?, ?, ?, ?)
+                ");
+                $teamIMensPlayer1 = $teamI['mens_pair_player1'] ?? '';
+                $teamIMensPlayer2 = $teamI['mens_pair_player2'] ?? '';
+                $teamJMensPlayer1 = $teamJ['mens_pair_player1'] ?? '';
+                $teamJMensPlayer2 = $teamJ['mens_pair_player2'] ?? '';
+                $stmt->bind_param("iiissssis",
+                    $matchNum,
+                    $teamIId,
+                    $teamJId,
+                    $teamIMensPlayer1,
+                    $teamIMensPlayer2,
+                    $teamJMensPlayer1,
+                    $teamJMensPlayer2,
+                    $mensTableId,
+                    $matchTime
+                );
+                $stmt->execute();
             }
             
-            echo json_encode(['success' => true, 'message' => 'Matches generated successfully']);
+            echo json_encode(['success' => true, 'message' => 'Matches generated successfully with schedule']);
             break;
 
         case 'assign_table':
